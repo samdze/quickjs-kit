@@ -1,0 +1,4 @@
+module CQuickJS {
+    header "../quickjs.h"
+    export *
+}

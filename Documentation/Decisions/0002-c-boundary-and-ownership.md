@@ -1,6 +1,6 @@
 # ADR 0002: Narrow C boundary and deterministic ownership
 
-- Status: Accepted
+- Status: Accepted; temporary-owner representation amended by ADR 0008
 - Date: 2026-07-15
 
 ## Context

@@ -61,13 +61,13 @@ runtime actor; contexts never create independent synchronization domains.
 The rules are:
 
 - Every C value entering Swift is immediately classified as borrowed or owned.
-- A QuickJS `JSValue` returned at +1 ownership is immediately placed in a
-  noncopyable RAII owner. That owner performs exactly one `JS_FreeValue`.
+- A QuickJS `JSValue` returned at +1 ownership is immediately placed in one
+  immutable RAII owner object. That owner performs exactly one `JS_FreeValue`.
 - Borrowed callback arguments are never freed unless first duplicated.
 - Runtime-bound values retain a lifetime token owned by the runtime. They never
   expose their pointer and never execute engine work in `deinit` on an arbitrary
   executor.
-- Long-lived values will be stored in an actor-owned registry. Public handles
+- Long-lived values are stored in an actor-owned canonical registry. Public handles
   carry stable IDs, not C pointers. Registry teardown releases values before the
   context, and contexts are released before the runtime.
 - Detached primitives and converted Swift models own ordinary Swift storage and
@@ -120,10 +120,13 @@ QuickJSKit/
 │   │   ├── include/module.modulemap
 │   │   └── upstream QuickJS sources
 │   └── QuickJSKit/
+│       ├── Conversion/
 │       ├── Errors/
 │       ├── Runtime/
 │       └── Values/
 └── Tests/QuickJSKitTests/
+    ├── PublicAPI/
+    └── Internal/
 ```
 
 Future capabilities should start as folders in `QuickJSKit`, not new targets.
@@ -170,7 +173,8 @@ explicitly named low-level directory.
   C entry refreshes the QuickJS stack top before other engine work.
 - Convert strings with explicit byte counts; never assume JavaScript strings are
   NUL-free.
-- Use noncopyable RAII owners for +1 C values.
+- Use one immutable RAII owner object for each +1 C value. Sharing the owner is
+  safe; transferring its raw value requires an explicit QuickJS duplication.
 - Do not use force unwraps, force casts, `unsafeBitCast`, unmanaged global state,
   or unchecked `Sendable` to silence the compiler.
 - State the ownership convention in a comment whenever it is not obvious from a
@@ -326,7 +330,7 @@ happy path.
 
 ## Roadmap
 
-### Phase 1 — architecture validation
+### Phase 1 — architecture validation (completed)
 
 - Package targets and pinned QuickJS integration.
 - Actor-isolated runtime/context ownership.
@@ -335,7 +339,7 @@ happy path.
 - Basic memory and stack configuration.
 - Architecture, decisions, contributor guidance, and focused tests.
 
-### Phase 2 — value and conversion system
+### Phase 2 — value and conversion system (completed)
 
 - Runtime-bound object, array, and function handles backed by an actor registry.
 - Direct primitive, optional, collection, binary, date, URL, and integer-safe

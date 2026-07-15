@@ -14,10 +14,24 @@ internal enum EngineJavaScriptValue {
 internal final class QuickJSEngine {
     internal let runtime: OpaquePointer
     internal let context: OpaquePointer
+    internal let maximumJavaScriptStackSize: Int
+
+    private let callbackBridge: QuickJSCallbackBridge
 
     private var nextReferenceIdentifier: UInt64 = 1
     private var references: [UInt64: StoredQuickJSValue] = [:]
     private var identifiersByObjectAddress: [UInt: UInt64] = [:]
+    internal var nextBindingIdentifier: UInt64 = 1
+    internal var nextOperationIdentifier: UInt64 = 1
+    internal var swiftBindings: [UInt64: RegisteredSwiftBinding] = [:]
+    internal var currentGlobalBindings: [String: UInt64] = [:]
+    internal var pendingSwiftPromises: [UInt64: PendingSwiftPromise] = [:]
+    internal var nextHostWaiterIdentifier: UInt64 = 1
+    internal var hostPromiseWaiters: [UInt64: HostPromiseWaiter] = [:]
+    internal var unhandledRejections: [UInt: ManagedQuickJSValue] = [:]
+    internal var observedPromiseAddresses: [UInt: Int] = [:]
+    internal var unhandledRejectionHandler: (@Sendable (JavaScriptError) -> Void)?
+    internal var callbackDepth = 0
 
     internal init(configuration: JavaScriptRuntime.Configuration) throws {
         let memoryLimit = try Self.platformSize(
@@ -47,12 +61,28 @@ internal final class QuickJSEngine {
             )
         }
 
+        let callbackBridge = QuickJSCallbackBridge()
         self.runtime = runtime
         self.context = context
+        self.maximumJavaScriptStackSize = maximumStackSize ?? Int(JS_DEFAULT_STACK_SIZE)
+        self.callbackBridge = callbackBridge
+        callbackBridge.engine = self
+        JS_SetRuntimeOpaque(
+            runtime,
+            Unmanaged.passUnretained(callbackBridge).toOpaque()
+        )
+        JS_SetHostPromiseRejectionTracker(
+            runtime,
+            quickJSKitPromiseRejectionTracker,
+            Unmanaged.passUnretained(callbackBridge).toOpaque()
+        )
     }
 
     deinit {
         JS_UpdateStackTop(runtime)
+        JS_SetHostPromiseRejectionTracker(runtime, nil, nil)
+        JS_SetRuntimeOpaque(runtime, nil)
+        removeAllBindingsForTeardown()
         references.removeAll()
         identifiersByObjectAddress.removeAll()
         JS_FreeContext(context)
@@ -63,7 +93,10 @@ internal final class QuickJSEngine {
 
     internal func prepareForEngineCall() {
         // Swift actors serialize access but do not provide OS-thread affinity.
-        JS_UpdateStackTop(runtime)
+        // A callback is nested inside an already prepared QuickJS entry. Moving
+        // the stack top deeper while JavaScript frames are active corrupts the
+        // engine's overflow baseline.
+        if callbackDepth == 0 { JS_UpdateStackTop(runtime) }
     }
 
     internal func evaluate(
@@ -130,7 +163,7 @@ internal final class QuickJSEngine {
         if JS_IsSymbol(value.raw) != 0 {
             throw JavaScriptError(
                 kind: .conversion,
-                message: "JavaScript symbols are not supported in Phase 2.",
+                message: "JavaScript symbols are not supported.",
                 sourceURL: sourceURL
             )
         }
@@ -143,6 +176,7 @@ internal final class QuickJSEngine {
 
     internal func releaseReference(_ identifier: UInt64) {
         guard let stored = references[identifier] else { return }
+        if stored.isPromise { unmarkPromiseObserved(at: stored.objectAddress) }
         stored.clientCount -= 1
         guard stored.clientCount == 0 else { return }
         identifiersByObjectAddress.removeValue(forKey: stored.objectAddress)
@@ -290,7 +324,8 @@ internal final class QuickJSEngine {
             raw: JS_DupValue(context, raw),
             context: context,
             objectAddress: address,
-            kind: kind
+            kind: kind,
+            isPromise: promiseStateRaw(raw) != nil
         )
         references[identifier] = stored
         identifiersByObjectAddress[address] = identifier
@@ -314,6 +349,11 @@ internal final class QuickJSEngine {
         }
         return result
     }
+
+    private func promiseStateRaw(_ raw: JSValue) -> UInt32? {
+        let state = JS_PromiseState(context, raw).rawValue
+        return state <= 2 ? state : nil
+    }
 }
 
 internal final class ManagedQuickJSValue {
@@ -333,18 +373,21 @@ private final class StoredQuickJSValue {
     fileprivate let context: OpaquePointer
     fileprivate let objectAddress: UInt
     fileprivate let kind: JavaScriptReferenceKind
+    fileprivate let isPromise: Bool
     fileprivate var clientCount = 1
 
     fileprivate init(
         raw: JSValue,
         context: OpaquePointer,
         objectAddress: UInt,
-        kind: JavaScriptReferenceKind
+        kind: JavaScriptReferenceKind,
+        isPromise: Bool
     ) {
         self.raw = raw
         self.context = context
         self.objectAddress = objectAddress
         self.kind = kind
+        self.isPromise = isPromise
     }
 
     deinit { JS_FreeValue(context, raw) }

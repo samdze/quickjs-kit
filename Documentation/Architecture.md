@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the implemented Phase 2 architecture and the stable
+This document describes the implemented Phase 3 architecture and the stable
 boundaries reserved for later platform capabilities. Features identified as
 future work are design constraints, not current API promises.
 
@@ -13,11 +13,13 @@ Swift tasks
     │ await
     ▼
 JavaScriptRuntime actor
-    ├── evaluation, globals, and runtime-bound codecs
+    ├── evaluation, globals, runtime-bound codecs, and typed bindings
+    ├── native Promise jobs, host waiters, cancellation, and rejection reports
     ├── live-value identity and lifetime coordination
     └── QuickJSEngine (internal, non-Sendable)
             ├── one JSRuntime heap and one JSContext realm
             ├── canonical actor-owned live-value registry
+            ├── canonical binding registry and detached descriptions
             ├── direct Encoder and Decoder containers
             ├── RAII owners for temporary and retained JSValue values
             └── CQuickJS
@@ -55,6 +57,13 @@ Typed evaluation avoids unnecessary registry traffic:
 2. The custom decoder traverses that result while it remains alive.
 3. The temporary is freed after decoding succeeds or throws.
 4. The caller receives the requested Swift value directly.
+
+When the root result is a native QuickJS promise, typed evaluation marks it as
+host-observed, drains pending jobs, and either decodes the fulfilled value,
+throws the copied rejection, or installs an actor-owned host continuation.
+Arbitrary thenables remain ordinary objects. The same root-promise rule applies
+to typed function calls, codec decoding, globals, object properties, and array
+elements.
 
 Execution and parsing failures remain `JavaScriptError`. Shape, range, and
 coding failures are standard `DecodingError` values with complete coding paths.
@@ -140,22 +149,83 @@ Every operation validates runtime affinity before materializing a live value.
 Cross-runtime use fails deterministically with `JavaScriptError` instead of
 passing an invalid engine value.
 
+## Typed Swift bindings
+
+`JavaScriptRuntime.function` uses Swift parameter packs to create statically
+typed invocation thunks for heterogeneous `Decodable & Sendable` parameters and
+`Encodable & Sendable` results. Separate overloads preserve all four Swift
+effect combinations. Missing JavaScript arguments enter the decoder as
+`undefined`, extra arguments are ignored, and `Void` becomes `undefined`.
+
+Each registration produces two deliberately separate internal values:
+
+- a detached `BindingDescription` containing location, names, type shapes,
+  effects, documentation, and deterministic order;
+- an actor-owned type-erased invocation thunk containing executable captures.
+
+The detached record is the future input to TypeScript and IDE artifact
+generation. It contains no QuickJS value, runtime pointer, closure, or root
+object. Primitive, integer, optional, collection, binary, date, URL, and custom
+Codable shapes are recorded at registration time.
+
+A global C trampoline recovers a runtime-specific bridge through QuickJS's
+runtime opaque slot and then resolves a monotonic binding ID in the actor-owned
+registry. JavaScript arguments are borrowed by QuickJS; the trampoline
+duplicates each one before direct decoding. Synchronous results return a
+duplicated value to QuickJS. No borrowed or C value becomes public or
+`Sendable`.
+
+QuickJS's JavaScript stack budget is paused only while an outermost Swift host
+thunk executes, because generic and Codable frames are host stack usage rather
+than recursive JavaScript execution. The exact configured budget is restored
+before control returns to JavaScript. Job checkpoints refresh the stack top on
+their current executor thread.
+
+`JavaScriptBinding` is a pointer-free lifecycle handle. Dropping it has no side
+effect. Explicit removal blocks new calls and is idempotent. Global replacement
+changes the exposed property without invalidating older JavaScript references;
+removing the older binding does not remove its replacement.
+
+## Native promises and checkpoints
+
+Async Swift bindings immediately create a native QuickJS promise and store its
+resolve/reject capabilities, producer task, provenance, binding ID, and active
+call accounting in the actor-owned engine. Completion re-enters the runtime
+actor, encodes or translates the result, settles exactly once, and discards any
+late result after cancellation.
+
+Pending jobs drain to exhaustion at outermost evaluation, calls, binding
+operations, and async settlement. Nested C callbacks do not create an
+independent drain. After the queue reaches a checkpoint, the runtime resumes
+fulfilled or rejected host waiters and reports each still-unhandled rejection
+once. Rejections handled during the same checkpoint and promises crossing a
+raw or typed host boundary are suppressed.
+
+Cancelling a host waiter for a native JavaScript promise removes only that
+waiter. If the directly awaited promise originated from a Swift async binding,
+cancellation also cancels its producer and rejects the shared promise, so other
+consumers observe cancellation. Removing a binding preserves active calls by
+default; the cancelling policy rejects them immediately even when their Swift
+task ignores cancellation.
+
+Async bindings may re-enter their runtime after suspension. Sync bindings run
+inside the active QuickJS call and must not synchronously re-enter it.
+
+## Explicit exports
+
+`JavaScriptRuntime.export` configures a JavaScript object through an explicit
+builder. It accepts only `AnyObject & Sendable` roots. Methods use the same typed
+binding descriptions and thunks as global functions; snapshot values use the
+direct encoder or same-runtime live values.
+
+Validation and encoding finish before the global property is changed. Duplicate
+members, invalid metadata, cross-runtime values, and encoding failures roll the
+transaction back. Methods are read-only non-enumerable own properties, while
+snapshot values are read-only enumerable own properties. The binding registry
+retains roots and closures until removal, active-call completion, or runtime
+teardown; it performs no reflection.
+
 ## Stable future boundaries
-
-### Binding metadata
-
-A future internal `BindingDescription` will be the shared source of truth for
-runtime registration, conversion thunks, documentation, TypeScript rendering,
-IDE artifacts, and macro output. It is introduced with Swift function
-registration, not retrofitted into the general value codec.
-
-### Async and promises
-
-QuickJS native promises remain the JavaScript abstraction. A Swift async binding
-will create a pending promise, perform structured Swift work, and re-enter the
-runtime actor to settle it. JavaScript promises returned to Swift will use the
-QuickJS pending-job queue. Cancellation and continuation ownership belong to
-the runtime actor.
 
 ### Modules
 
@@ -201,8 +271,8 @@ Android use their native Swift toolchains and remain equal API targets.
 - Detached primitives copy only their Swift representation.
 - Canonical live IDs avoid repeated encode/decode and preserve identity.
 - QuickJS receives source and strings with explicit UTF-8 byte lengths.
-- Binding invocation will favor generated or generic static thunks over
-  reflection and dynamic dispatch.
+- Binding invocation uses generic static thunks and explicit exports rather
+  than reflection.
 - TypeScript generation will operate on detached metadata without starting
   QuickJS.
 
@@ -230,7 +300,9 @@ Sanitizers and warning-as-error builds are release gates, not optional cleanup.
 | Values | Detached data and pointer-free live handles | Swift concurrency safety without pretending pointers are `Sendable` |
 | Conversion | Runtime-bound direct Encoder/Decoder | Native representations and coding paths without JSON |
 | Integer policy | Safe `number`, otherwise `bigint` | Signed and unsigned integers remain lossless |
-| Bindings | One future canonical description model | Runtime, TypeScript, docs, IDE files, and macros can stay synchronized |
+| Bindings | Detached descriptions paired with actor-owned thunks | Runtime, TypeScript, docs, IDE files, and macros can stay synchronized |
+| Promises | Native QuickJS promises and actor-owned checkpoints | Swift async interoperation preserves JavaScript semantics |
+| Exports | Explicit transactional builder | Surfaces are reviewable, typed, and macro-ready without reflection |
 | Portability | Portable core and tiny future adapters | Identical public API across supported platforms |
 | Distribution | Pinned upstream source in a C target | Reproducible builds and auditable upgrades |
 

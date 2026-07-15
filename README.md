@@ -72,7 +72,7 @@ let decoded = try await decoder.decode(User.self, from: encoded)
 ```
 
 The codecs traverse QuickJS values directly. They do not serialize through
-JSON or an intermediate value tree. Phase 2 supports:
+JSON or an intermediate value tree. QuickJSKit supports:
 
 - strict `Bool`, `String`, `Float`, and `Double` conversion;
 - lossless signed and unsigned integers, using JavaScript `bigint` outside the
@@ -81,6 +81,55 @@ JSON or an intermediate value tree. Phase 2 supports:
 - `Data` as `Uint8Array`, `Date` as JavaScript `Date`, and `URL` as a string;
 - permissive documented decode forms for binary data, dates, and URLs;
 - arbitrary-size detached integers through `JavaScriptBigInt`.
+
+## Typed Swift bindings and native promises
+
+Swift parameter packs preserve heterogeneous argument types without exposing a
+variadic C-shaped callback API. Synchronous, throwing, asynchronous, and
+asynchronous-throwing closures use their natural JavaScript behavior:
+
+```swift
+let sum = try await runtime.function(
+    "sum",
+    options: .init(
+        parameterNames: ["left", "right"],
+        documentation: "Adds two integers."
+    )
+) { (left: Int, right: Int) in
+    left + right
+}
+
+let answer: Int = try await runtime.evaluate("sum(20, 22)")
+try await sum.remove()
+```
+
+Async Swift functions return native QuickJS promises. Typed evaluation,
+function calls, property and array reads, and `JavaScriptDecoder` automatically
+await native promises. Raw APIs return live promise objects immediately.
+
+```swift
+try await runtime.function("loadUser") { (id: Int) async throws -> User in
+    try await database.user(id: id)
+}
+
+let user: User = try await runtime.evaluate("loadUser(42)")
+```
+
+Explicit exports make the JavaScript surface reviewable and retain metadata for
+future TypeScript generation:
+
+```swift
+let binding = try await runtime.export(storage, as: "storage") { storage, export in
+    export.function("read", options: .init(parameterNames: ["key"])) { key in
+        try await storage.read(key)
+    }
+    export.value("1.0", as: "version", documentation: "API version.")
+}
+```
+
+Methods are read-only and non-enumerable; snapshot values are read-only and
+enumerable. Export publication is transactional. Binding removal is explicit,
+idempotent, and can either preserve or cancel active asynchronous calls.
 
 JavaScript execution failures are `JavaScriptError` values with copied names,
 messages, stacks, and source identities. Swift result-shape failures use the
@@ -103,13 +152,13 @@ runtime destruction.
 
 ## Current scope
 
-Phase 2 provides evaluation, live objects/arrays/functions, globals, arbitrary
-BigInt values, direct `Codable` conversion, Foundation value policies, resource
-configuration, and structured errors.
+Phase 3 provides evaluation, live values, direct `Codable` conversion, typed
+Swift closure registration, native promise interoperability, explicit actor
+exports, binding lifecycle control, and unhandled-rejection observation.
 
-Swift closure registration, promises and async bridging, modules, interrupts,
-timeouts, TypeScript generation, IDE workspaces, and macros remain deliberate
-future phases. See [Architecture](Documentation/Architecture.md), the
+Modules, interrupts, timeouts, TypeScript rendering, IDE workspaces, macros,
+reflection-based exports, computed properties, and `AbortSignal` integration
+remain deliberate future phases. See [Architecture](Documentation/Architecture.md), the
 [decision records](Documentation/Decisions), and [AGENTS.md](AGENTS.md) before
 contributing.
 

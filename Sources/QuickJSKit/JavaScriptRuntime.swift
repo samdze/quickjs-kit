@@ -25,7 +25,7 @@ public actor JavaScriptRuntime {
     /// The immutable configuration used to create this runtime.
     public nonisolated let configuration: Configuration
 
-    private let engine: QuickJSEngine
+    internal let engine: QuickJSEngine
 
     /// Creates an isolated JavaScript runtime.
     public init(configuration: Configuration = Configuration()) throws {
@@ -55,12 +55,27 @@ public actor JavaScriptRuntime {
         )
     }
 
+    /// Installs or clears the observer for JavaScript promise rejections that
+    /// remain unhandled after a complete microtask checkpoint.
+    ///
+    /// The handler executes on this runtime's actor and should return quickly.
+    /// Launch a separate task for long-running work.
+    public func setUnhandledPromiseRejectionHandler(
+        _ handler: (@Sendable (JavaScriptError) -> Void)?
+    ) {
+        engine.unhandledRejectionHandler = handler
+    }
+
     /// Evaluates a JavaScript script and returns its general value.
     public func evaluate(
         _ source: String,
         sourceURL: String = "<eval>"
     ) throws -> JavaScriptValue {
-        try makeValue(engine.evaluate(source, sourceURL: sourceURL))
+        let raw = try engine.evaluateRaw(source, sourceURL: sourceURL)
+        engine.markPromiseObserved(raw)
+        let result = try makeValue(engine.decodeUntyped(raw, sourceURL: sourceURL))
+        try engine.drainPendingJobs()
+        return result
     }
 
     /// Evaluates JavaScript and directly decodes its result as a Swift type.
@@ -70,12 +85,13 @@ public actor JavaScriptRuntime {
         _ source: String,
         as type: T.Type = T.self,
         sourceURL: String = "<eval>"
-    ) throws -> T {
+    ) async throws -> T {
         let raw = try engine.evaluateRaw(source, sourceURL: sourceURL)
-        return try engine.decode(
+        return try await decodeAwaitingPromise(
             type,
             from: raw,
-            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
+            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
+            sourceURL: sourceURL
         )
     }
 
@@ -86,6 +102,34 @@ public actor JavaScriptRuntime {
 
     internal var retainedReferenceCountForTesting: Int {
         engine.retainedReferenceCount
+    }
+
+    internal var bindingCountForTesting: Int { engine.swiftBindings.count }
+
+    internal var pendingPromiseCountForTesting: Int { engine.pendingSwiftPromises.count }
+
+    internal var hostWaiterCountForTesting: Int { engine.hostPromiseWaiters.count }
+
+    internal var callbackDepthForTesting: Int { engine.callbackDepth }
+
+    internal var bindingDescriptionsForTesting: [BindingDescription] {
+        engine.swiftBindings.values.compactMap(\.invocation?.description)
+    }
+
+    internal func isBindingActive(_ identifier: UInt64) -> Bool {
+        engine.isBindingActive(identifier)
+    }
+
+    internal func removeBinding(
+        _ identifier: UInt64,
+        cancellingInFlight: Bool
+    ) throws -> Bool {
+        let removed = try engine.removeBinding(
+            identifier,
+            cancellingInFlight: cancellingInFlight
+        )
+        try engine.drainPendingJobs()
+        return removed
     }
 
     internal func encode<T: Encodable & Sendable>(
@@ -100,10 +144,10 @@ public actor JavaScriptRuntime {
         _ type: T.Type,
         from value: JavaScriptValue,
         maximumNestingDepth: Int
-    ) throws -> T {
+    ) async throws -> T {
         try validate(value)
         let raw = try engine.materialize(value)
-        return try engine.decode(
+        return try await decodeAwaitingPromise(
             type,
             from: raw,
             maximumNestingDepth: maximumNestingDepth
@@ -115,19 +159,21 @@ public actor JavaScriptRuntime {
         on reference: JavaScriptReference
     ) throws -> JavaScriptValue {
         try validate(reference)
-        return try makeValue(
+        let result = try makeValue(
             engine.propertyValue(named: name, on: reference.identifier)
         )
+        try engine.drainPendingJobs()
+        return result
     }
 
     internal func value<T: Decodable & Sendable>(
         forProperty name: String,
         on reference: JavaScriptReference,
         as type: T.Type
-    ) throws -> T {
+    ) async throws -> T {
         try validate(reference)
         let raw = try engine.rawPropertyValue(named: name, on: reference.identifier)
-        return try engine.decode(
+        return try await decodeAwaitingPromise(
             type,
             from: raw,
             maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
@@ -183,17 +229,19 @@ public actor JavaScriptRuntime {
 
     internal func value(at index: Int, in reference: JavaScriptReference) throws -> JavaScriptValue {
         try validate(reference, expected: .array)
-        return try makeValue(engine.arrayValue(at: index, in: reference.identifier))
+        let result = try makeValue(engine.arrayValue(at: index, in: reference.identifier))
+        try engine.drainPendingJobs()
+        return result
     }
 
     internal func value<T: Decodable & Sendable>(
         at index: Int,
         in reference: JavaScriptReference,
         as type: T.Type
-    ) throws -> T {
+    ) async throws -> T {
         try validate(reference, expected: .array)
         let raw = try engine.rawArrayValue(at: index, in: reference.identifier)
-        return try engine.decode(
+        return try await decodeAwaitingPromise(
             type,
             from: raw,
             maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
@@ -245,20 +293,22 @@ public actor JavaScriptRuntime {
           repeat each Argument: Sendable {
         try validate(function, expected: .function)
         let arguments = try encodeArguments(repeat each arguments)
-        return try makeValue(
+        let result = try makeValue(
             engine.call(
                 function.identifier,
                 receiverIdentifier: nil,
                 arguments: arguments
             )
         )
+        try engine.drainPendingJobs()
+        return result
     }
 
     internal func call<each Argument, Result>(
         _ function: JavaScriptReference,
         arguments: repeat each Argument,
         as type: Result.Type
-    ) throws -> Result
+    ) async throws -> Result
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable,
           Result: Decodable & Sendable {
@@ -269,7 +319,7 @@ public actor JavaScriptRuntime {
             receiverIdentifier: nil,
             arguments: arguments
         )
-        return try engine.decode(
+        return try await decodeAwaitingPromise(
             type,
             from: raw,
             maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
@@ -281,7 +331,7 @@ public actor JavaScriptRuntime {
         on receiver: JavaScriptReference,
         arguments: repeat each Argument,
         as type: Result.Type
-    ) throws -> Result
+    ) async throws -> Result
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable,
           Result: Decodable & Sendable {
@@ -293,7 +343,7 @@ public actor JavaScriptRuntime {
             receiverIdentifier: receiver.identifier,
             arguments: arguments
         )
-        return try engine.decode(
+        return try await decodeAwaitingPromise(
             type,
             from: raw,
             maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
@@ -309,13 +359,90 @@ public actor JavaScriptRuntime {
         if let receiver { try validate(receiver) }
         for argument in arguments { try validate(argument) }
         let rawArguments = try arguments.map(engine.materialize)
-        return try makeValue(
+        let result = try makeValue(
             engine.call(
                 function.identifier,
                 receiverIdentifier: receiver?.identifier,
                 arguments: rawArguments
             )
         )
+        try engine.drainPendingJobs()
+        return result
+    }
+
+    private func decodeAwaitingPromise<T: Decodable & Sendable>(
+        _ type: T.Type,
+        from raw: ManagedQuickJSValue,
+        maximumNestingDepth: Int,
+        sourceURL: String? = nil
+    ) async throws -> T {
+        engine.markPromiseObserved(raw)
+        defer { engine.unmarkPromiseObserved(raw) }
+        try engine.drainPendingJobs()
+        guard let state = engine.promiseState(of: raw) else {
+            return try engine.decode(
+                type,
+                from: raw,
+                maximumNestingDepth: maximumNestingDepth
+            )
+        }
+        if state == 1 {
+            let result = engine.promiseResult(of: raw)
+            return try engine.decode(
+                type,
+                from: result,
+                maximumNestingDepth: maximumNestingDepth
+            )
+        }
+        if state == 2 {
+            throw engine.errorFromRejectedPromise(raw).withSourceURL(sourceURL)
+        }
+
+        let waiterIdentifier = engine.allocateHostWaiterIdentifier()
+        let producer = engine.producerOperationIdentifier(for: raw)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let waiter = HostPromiseWaiter(
+                    promise: raw,
+                    producerOperationIdentifier: producer,
+                    poll: { engine, promise in
+                        guard let state = engine.promiseState(of: promise), state != 0 else {
+                            return false
+                        }
+                        if state == 2 {
+                            continuation.resume(
+                                throwing: engine.errorFromRejectedPromise(promise)
+                                    .withSourceURL(sourceURL)
+                            )
+                            return true
+                        }
+                        do {
+                            let result = engine.promiseResult(of: promise)
+                            continuation.resume(
+                                returning: try engine.decode(
+                                    type,
+                                    from: result,
+                                    maximumNestingDepth: maximumNestingDepth
+                                )
+                            )
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
+                        return true
+                    },
+                    cancel: {
+                        continuation.resume(throwing: CancellationError())
+                    }
+                )
+                engine.installHostPromiseWaiter(waiter, identifier: waiterIdentifier)
+            }
+        } onCancel: {
+            Task { await self.cancelHostPromiseWaiter(waiterIdentifier) }
+        }
+    }
+
+    private func cancelHostPromiseWaiter(_ identifier: UInt64) {
+        engine.cancelHostPromiseWaiter(identifier)
     }
 
     private func encodeArguments<each Argument>(
@@ -335,7 +462,7 @@ public actor JavaScriptRuntime {
         return result
     }
 
-    private func makeValue(_ value: EngineJavaScriptValue) -> JavaScriptValue {
+    internal func makeValue(_ value: EngineJavaScriptValue) -> JavaScriptValue {
         switch value {
         case let .detached(value):
             value

@@ -10,6 +10,7 @@ extension QuickJSEngine {
             let raw = name.withCString { JS_GetPropertyStr(context, object, $0) }
             let value = ManagedQuickJSValue(raw, in: context)
             if JS_IsException(raw) != 0 { throw extractException() }
+            markPromiseObserved(value)
             return try decodeUntyped(value)
         }
     }
@@ -106,6 +107,7 @@ extension QuickJSEngine {
 
     internal func arrayValue(at index: Int, in identifier: UInt64) throws -> EngineJavaScriptValue {
         let value = try rawArrayValue(at: index, in: identifier)
+        markPromiseObserved(value)
         return try decodeUntyped(value)
     }
 
@@ -152,6 +154,7 @@ extension QuickJSEngine {
             receiverIdentifier: receiverIdentifier,
             arguments: arguments
         )
+        markPromiseObserved(result)
         return try decodeUntyped(result)
     }
 

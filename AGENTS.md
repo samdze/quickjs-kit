@@ -100,9 +100,10 @@ jobs, callbacks, loaders, and value registry.
   operation. Reentrancy must be explicit and tested before it is enabled.
 - Promise jobs are drained by the owning actor. Async Swift work may suspend,
   but promise settlement must re-enter that actor.
-- Cancellation and deadlines will use QuickJS's interrupt handler and Swift task
-  cancellation. Interrupt callbacks may only inspect atomically readable state;
-  they must not call into JavaScript.
+- Future script interruption and deadlines will use QuickJS's interrupt handler
+  and Swift task cancellation. Promise waiters and Swift binding producers
+  already use actor-owned task cancellation. Interrupt callbacks may only
+  inspect atomically readable state; they must not call into JavaScript.
 - Avoid locks. A narrow atomic flag is acceptable for an interrupt callback
   when actor access is impossible, provided the decision is documented.
 
@@ -120,6 +121,7 @@ QuickJSKit/
 │   │   ├── include/module.modulemap
 │   │   └── upstream QuickJS sources
 │   └── QuickJSKit/
+│       ├── Bindings/
 │       ├── Conversion/
 │       ├── Errors/
 │       ├── Runtime/
@@ -245,13 +247,14 @@ discoverable, strongly typed, unsurprising, and difficult to misuse.
 ## Binding and TypeScript design
 
 Runtime registration, TypeScript generation, IDE workspace generation, and
-future macros must consume one canonical binding description. A binding record
-will describe its JavaScript name, namespace/module, parameters, result,
-sync/async and throwing behavior, documentation, and invocation thunk.
+future macros must consume one canonical detached binding description. It
+describes JavaScript location, names, parameters, result, sync/async and
+throwing behavior, documentation, and deterministic ordering. The runtime
+pairs it with a separate actor-owned invocation thunk.
 
-Runtime type metadata and TypeScript-rendering metadata should be separated
-inside that record so declaration generation is deterministic and does not need
-a running JavaScript engine. Macros should emit the same records handwritten
+Descriptions must contain no closure, root object, QuickJS value, or runtime
+pointer, so declaration generation remains deterministic and does not need a
+running JavaScript engine. Macros should emit the same records handwritten
 registration uses. Do not create macro-only runtime pathways.
 
 ## Documentation guidelines
@@ -334,7 +337,7 @@ happy path.
 
 - Package targets and pinned QuickJS integration.
 - Actor-isolated runtime/context ownership.
-- Noncopyable RAII for temporary values.
+- RAII ownership for temporary values.
 - Primitive evaluation and structured exceptions.
 - Basic memory and stack configuration.
 - Architecture, decisions, contributor guidance, and focused tests.
@@ -347,7 +350,7 @@ happy path.
 - Typed `evaluate<T>` and global access.
 - Explicit `Codable` policy without making JSON the universal bridge.
 
-### Phase 3 — bindings and async
+### Phase 3 — bindings and async (completed)
 
 - Canonical binding descriptions and typed Swift closure registration.
 - Throws and async-throws bridging to native JavaScript promises.

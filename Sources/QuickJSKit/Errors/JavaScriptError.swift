@@ -68,4 +68,14 @@ public struct JavaScriptError: Error, Sendable, Equatable, CustomStringConvertib
         }
         return message
     }
+
+    internal func withSourceURL(_ sourceURL: String?) -> JavaScriptError {
+        JavaScriptError(
+            kind: kind,
+            name: name,
+            message: message,
+            stack: stack,
+            sourceURL: sourceURL ?? self.sourceURL
+        )
+    }
 }

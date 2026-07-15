@@ -1,6 +1,6 @@
 # ADR 0004: Canonical binding descriptions
 
-- Status: Accepted
+- Status: Accepted; invocation storage refined by ADR 0009
 - Date: 2026-07-15
 
 ## Context
@@ -11,11 +11,12 @@ drift and make synchronization unreliable.
 
 ## Decision
 
-Future registration APIs and macros will produce one canonical internal binding
+Registration APIs and future macros produce one canonical internal binding
 description containing JavaScript identity, Swift/TypeScript type shapes,
-documentation, effects, and an invocation thunk. Declaration and workspace
-generation operate deterministically on detached descriptions and do not require
-a running QuickJS instance.
+documentation, and effects. As refined by ADR 0009, executable invocation
+thunks are paired actor-owned records rather than part of the detached
+description. Declaration and workspace generation operate deterministically on
+descriptions and do not require a running QuickJS instance.
 
 ## Consequences
 

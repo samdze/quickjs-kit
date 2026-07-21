@@ -373,8 +373,8 @@ happy path.
 ### Phase 5 — TypeScript and IDE tooling (completed)
 
 - Explicit macro-ready schemas and detached environment snapshots.
-- Deterministic `.d.ts` generation for globals, exports, modules, models, docs,
-  and enum literal unions.
+- Deterministic `.d.ts` generation for global, namespaced, and module-owned
+  types plus globals, exports, models, docs, and enum literal unions.
 - Structured TSDoc for hover cards, signature help, examples, links, defaults,
   errors, and deprecation, with an independent documentation-completeness gate.
 - Reproducible managed editor workspaces with safe explicit regeneration.
@@ -382,11 +382,11 @@ happy path.
 ### Phase 6 — templates, macros, and ecosystem maturity
 
 - Declarative runtime templates for efficient creation of many identically
-  configured independent runtimes.
+  configured independent runtimes, including per-instance Swift export
+  factories.
 - Optional macro target that emits canonical binding descriptions.
 - `@JavaScriptExport`-style actor and type exports.
-- Declarative runtime templates, per-instance Swift export factories, and
-  internal version-bound compilation caches for high-volume runtime creation.
+- Internal version-bound compilation caches for high-volume runtime creation.
 - Benchmarks, compatibility policy, security guide, DocC catalog, examples,
   release automation, and broad platform CI.
 

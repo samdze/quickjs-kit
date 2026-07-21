@@ -17,7 +17,7 @@ internal enum BindingValidation {
             )
         }
         guard Set(names).count == names.count,
-              names.allSatisfy(isConservativeIdentifier) else {
+              names.allSatisfy(TypeScriptIdentifier.isConservative) else {
             return (
                 names,
                 "Parameter names must be unique valid JavaScript identifiers."
@@ -33,25 +33,4 @@ internal enum BindingValidation {
         return false
     }
 
-    private static func isConservativeIdentifier(_ name: String) -> Bool {
-        guard let first = name.unicodeScalars.first else { return false }
-        func isStart(_ scalar: Unicode.Scalar) -> Bool {
-            scalar == "_" || scalar == "$" ||
-                (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
-        }
-        let hasValidScalars = isStart(first) && name.unicodeScalars.dropFirst().allSatisfy {
-            isStart($0) || (48...57).contains($0.value)
-        }
-        return hasValidScalars && !reservedParameterNames.contains(name)
-    }
-
-    private static let reservedParameterNames: Set<String> = [
-        "await", "break", "case", "catch", "class", "const", "continue",
-        "debugger", "default", "delete", "do", "else", "enum", "export",
-        "extends", "false", "finally", "for", "function", "if", "import",
-        "in", "instanceof", "let", "new", "null", "return", "static",
-        "super", "switch", "this", "throw", "true", "try", "typeof",
-        "var", "void", "while", "with", "yield", "implements", "interface",
-        "package", "private", "protected", "public",
-    ]
 }

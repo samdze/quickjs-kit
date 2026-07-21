@@ -20,6 +20,16 @@ declare namespace QuickJSKit {
     }
 }
 
+interface HostConfiguration {
+    readonly environment: string;
+}
+
+declare namespace Example.Models {
+    interface Session {
+        readonly token: string;
+    }
+}
+
 /**
  * Loads a user.
  *
@@ -40,5 +50,11 @@ declare namespace QuickJSKit {
 declare function loadUser(id: number | bigint): Promise<QuickJSKit.User | null>;
 
 declare module "host:answer" {
+    /** Metadata exported by the host module. */
+    export interface AnswerMetadata {
+        readonly source: string;
+    }
+
     export const answer: number;
+    export const metadata: AnswerMetadata;
 }

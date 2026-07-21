@@ -8,6 +8,32 @@ public protocol TypeScriptSchemaProviding {
     static var typeScriptSchema: TypeScriptSchema { get }
 }
 
+/// The TypeScript declaration location owned by a schema or definition.
+///
+/// Scopes describe compile-time TypeScript names only. They do not create
+/// JavaScript objects or alter QuickJS module loading. A global or namespaced
+/// type is available without an import. A module type is exported from the
+/// matching ambient module and can be consumed with `import type`.
+public enum TypeScriptDeclarationScope:
+    Sendable,
+    Hashable,
+    ExpressibleByStringLiteral
+{
+    /// An ambient type declared at the top level.
+    case global
+
+    /// A type inside a namespace such as `Acme.Models`.
+    case namespace(String)
+
+    /// A type exported by the JavaScript module with this specifier.
+    case module(String)
+
+    /// Creates a named namespace from a string literal.
+    public init(stringLiteral value: String) {
+        self = .namespace(value)
+    }
+}
+
 /// A complete TypeScript representation for one Swift type.
 ///
 /// A schema has one primary type and may carry several related definitions.
@@ -20,18 +46,28 @@ public struct TypeScriptSchema: Sendable, Hashable {
     /// Named declarations required by ``type``.
     public let definitions: [TypeScriptDefinition]
 
+    /// The declaration scope inherited by this schema's definitions.
+    ///
+    /// A `nil` value uses
+    /// ``TypeScriptDeclarationOptions/defaultTypeScope`` when declarations are
+    /// generated.
+    public let scope: TypeScriptDeclarationScope?
+
     /// Creates a schema from a primary type and its named declarations.
     public init(
         type: TypeScriptType,
-        definitions: [TypeScriptDefinition]
+        definitions: [TypeScriptDefinition],
+        scope: TypeScriptDeclarationScope? = nil
     ) {
         self.type = type
         self.definitions = definitions
+        self.scope = scope
     }
 
     /// Creates a schema containing one interface declaration.
     public static func interface(
         _ name: String,
+        scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
         properties: [TypeScriptProperty]
     ) -> Self {
@@ -43,7 +79,8 @@ public struct TypeScriptSchema: Sendable, Hashable {
                     documentation: documentation,
                     properties: properties
                 ),
-            ]
+            ],
+            scope: scope
         )
     }
 
@@ -51,13 +88,15 @@ public struct TypeScriptSchema: Sendable, Hashable {
     public static func alias(
         _ name: String,
         to type: TypeScriptType,
+        scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil
     ) -> Self {
         Self(
             type: .named(name),
             definitions: [
                 .alias(name: name, documentation: documentation, type: type),
-            ]
+            ],
+            scope: scope
         )
     }
 
@@ -67,6 +106,7 @@ public struct TypeScriptSchema: Sendable, Hashable {
     /// matching Codable values that do not export a JavaScript enum object.
     public static func enumeration(
         _ name: String,
+        scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
         cases: [TypeScriptEnumCase]
     ) -> Self {
@@ -78,7 +118,8 @@ public struct TypeScriptSchema: Sendable, Hashable {
                     documentation: documentation,
                     cases: cases
                 ),
-            ]
+            ],
+            scope: scope
         )
     }
 }
@@ -104,7 +145,9 @@ public indirect enum TypeScriptType: Sendable, Hashable {
     /// The standard JavaScript `Uint8Array` object.
     case uint8Array
     /// A named type declared by a schema definition.
-    case named(String)
+    ///
+    /// A `nil` scope resolves relative to the containing schema or definition.
+    case named(String, scope: TypeScriptDeclarationScope? = nil)
     /// A mutable JavaScript array.
     case array(TypeScriptType)
     /// A string-keyed JavaScript object.
@@ -116,27 +159,88 @@ public indirect enum TypeScriptType: Sendable, Hashable {
 }
 
 /// A named TypeScript declaration carried by a schema.
-public enum TypeScriptDefinition: Sendable, Hashable {
-    /// A structural interface.
-    case interface(
+public struct TypeScriptDefinition: Sendable, Hashable {
+    /// The structural form of a named declaration.
+    public enum Kind: Sendable, Hashable {
+        /// A structural interface.
+        case interface(properties: [TypeScriptProperty])
+
+        /// A named type alias.
+        case alias(TypeScriptType)
+
+        /// A named string or integer literal union.
+        case enumeration(cases: [TypeScriptEnumCase])
+    }
+
+    /// The declared TypeScript name.
+    public let name: String
+
+    /// An optional scope overriding the containing schema's scope.
+    public let scope: TypeScriptDeclarationScope?
+
+    /// Structured documentation rendered before the declaration.
+    public let documentation: TypeScriptDocumentation?
+
+    /// The declaration's structural form.
+    public let kind: Kind
+
+    /// Creates a named declaration.
+    public init(
         name: String,
-        documentation: TypeScriptDocumentation?,
+        scope: TypeScriptDeclarationScope? = nil,
+        documentation: TypeScriptDocumentation? = nil,
+        kind: Kind
+    ) {
+        self.name = name
+        self.scope = scope
+        self.documentation = documentation
+        self.kind = kind
+    }
+
+    /// Creates an interface declaration.
+    public static func interface(
+        name: String,
+        scope: TypeScriptDeclarationScope? = nil,
+        documentation: TypeScriptDocumentation? = nil,
         properties: [TypeScriptProperty]
-    )
+    ) -> Self {
+        Self(
+            name: name,
+            scope: scope,
+            documentation: documentation,
+            kind: .interface(properties: properties)
+        )
+    }
 
-    /// A named type alias.
-    case alias(
+    /// Creates a type-alias declaration.
+    public static func alias(
         name: String,
-        documentation: TypeScriptDocumentation?,
+        scope: TypeScriptDeclarationScope? = nil,
+        documentation: TypeScriptDocumentation? = nil,
         type: TypeScriptType
-    )
+    ) -> Self {
+        Self(
+            name: name,
+            scope: scope,
+            documentation: documentation,
+            kind: .alias(type)
+        )
+    }
 
-    /// A named string or integer literal union.
-    case enumeration(
+    /// Creates an enum-style literal-union declaration.
+    public static func enumeration(
         name: String,
-        documentation: TypeScriptDocumentation?,
+        scope: TypeScriptDeclarationScope? = nil,
+        documentation: TypeScriptDocumentation? = nil,
         cases: [TypeScriptEnumCase]
-    )
+    ) -> Self {
+        Self(
+            name: name,
+            scope: scope,
+            documentation: documentation,
+            kind: .enumeration(cases: cases)
+        )
+    }
 }
 
 /// A property in a TypeScript interface.

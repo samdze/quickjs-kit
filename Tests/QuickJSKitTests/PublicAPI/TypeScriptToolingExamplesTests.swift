@@ -18,6 +18,19 @@ struct TypeScriptToolingExamplesTests {
         )
     }
 
+    struct ModuleUser: Codable, Sendable, TypeScriptSchemaProviding {
+        let id: Int
+
+        static let typeScriptSchema = TypeScriptSchema.interface(
+            "User",
+            scope: .module("host:users"),
+            documentation: "A user exported by the host users module.",
+            properties: [
+                .init("id", type: .number, isReadonly: true),
+            ]
+        )
+    }
+
     @Test("a runtime snapshot renders typed globals deterministically")
     func snapshotRendersTypedGlobals() async throws {
         let runtime = try JavaScriptRuntime()
@@ -52,6 +65,137 @@ struct TypeScriptToolingExamplesTests {
          */
         declare function loadUser(id: number | bigint, nickname?: string | null): Promise<QuickJSKit.User | null>;
         """ + "\n")
+    }
+
+    @Test("schemas can use global named and module declaration scopes")
+    func schemasUseExplicitDeclarationScopes() async throws {
+        let global = TypeScriptSchema.interface(
+            "Configuration",
+            scope: .global,
+            properties: [.init("debug", type: .boolean)]
+        )
+        let model = TypeScriptSchema.interface(
+            "User",
+            scope: "Acme.Models",
+            properties: [.init("id", type: .number)]
+        )
+        let service = TypeScriptSchema.alias(
+            "UserResult",
+            to: .named("User", scope: "Acme.Models"),
+            scope: "Acme.Services"
+        )
+
+        let runtime = try JavaScriptRuntime()
+        try await runtime.defineModule("host:users") { module in
+            module.function("loadUser") { () -> ModuleUser in ModuleUser(id: 42) }
+        }
+        try await runtime.function("cachedUser") { () -> ModuleUser in ModuleUser(id: 42) }
+
+        let declarations = try await runtime.environmentDescription(
+            including: [global, model, service]
+        ).typeScriptDeclarations()
+
+        #expect(declarations.contains("interface Configuration"))
+        #expect(declarations.contains("declare namespace Acme.Models"))
+        #expect(declarations.contains("declare namespace Acme.Services"))
+        #expect(declarations.contains("type UserResult = Acme.Models.User;"))
+        #expect(declarations.contains("declare function cachedUser(): import(\"host:users\").User;"))
+        #expect(declarations.contains("export interface User"))
+        #expect(declarations.contains("export function loadUser(): User;"))
+    }
+
+    @Test("the default type scope is customizable without changing schemas")
+    func defaultTypeScopeIsCustomizable() async throws {
+        let runtime = try JavaScriptRuntime()
+        let environment = try await runtime.environmentDescription(including: [User.typeScriptSchema])
+
+        let namespaced = try environment.typeScriptDeclarations(
+            options: .init(defaultTypeScope: "Example.Models")
+        )
+        let global = try environment.typeScriptDeclarations(
+            options: .init(defaultTypeScope: .global)
+        )
+
+        #expect(namespaced.contains("declare namespace Example.Models"))
+        #expect(!global.contains("declare namespace"))
+        #expect(global.contains("interface User"))
+    }
+
+    @Test("equal names are independent across declaration scopes")
+    func equalNamesAreIndependentAcrossScopes() async throws {
+        let first = TypeScriptSchema.interface(
+            "Result",
+            scope: "First",
+            properties: [.init("value", type: .string)]
+        )
+        let second = TypeScriptSchema.interface(
+            "Result",
+            scope: "Second",
+            properties: [.init("value", type: .number)]
+        )
+        let runtime = try JavaScriptRuntime()
+        let declarations = try await runtime.environmentDescription(including: [second, first])
+            .typeScriptDeclarations()
+
+        #expect(declarations.contains("declare namespace First"))
+        #expect(declarations.contains("declare namespace Second"))
+        let firstIndex = try #require(
+            declarations.firstRange(of: "declare namespace First")?.lowerBound
+        )
+        let secondIndex = try #require(
+            declarations.firstRange(of: "declare namespace Second")?.lowerBound
+        )
+        #expect(firstIndex < secondIndex)
+    }
+
+    @Test("inherited and explicit equivalent scopes deduplicate definitions")
+    func equivalentScopesDeduplicateDefinitions() async throws {
+        let inherited = TypeScriptSchema(
+            type: .named("Value"),
+            definitions: [.alias(name: "Value", type: .string)],
+            scope: "Models"
+        )
+        let explicit = TypeScriptSchema(
+            type: .named("Value", scope: "Models"),
+            definitions: [
+                .alias(name: "Value", scope: "Models", type: .string),
+            ],
+            scope: .global
+        )
+        let runtime = try JavaScriptRuntime()
+        let declarations = try await runtime.environmentDescription(
+            including: [explicit, inherited]
+        ).typeScriptDeclarations()
+
+        #expect(declarations.components(separatedBy: "type Value = string;").count == 2)
+    }
+
+    @Test("source modules combine generated schemas with companion declarations")
+    func sourceModulesCombineSchemasAndCompanions() async throws {
+        let schema = TypeScriptSchema.interface(
+            "Metadata",
+            scope: .module("host:answer"),
+            properties: [.init("source", type: .string)]
+        )
+        let runtime = try JavaScriptRuntime()
+        try await runtime.registerModule(
+            "export const answer = 42;",
+            as: "host:answer",
+            typeScriptDeclarations: .init("export const answer: number;")
+        )
+
+        let declarations = try await runtime.environmentDescription(including: [schema])
+            .typeScriptDeclarations()
+
+        #expect(declarations.contains("export interface Metadata"))
+        #expect(declarations.contains("export const answer: number;"))
+        let schemaIndex = try #require(
+            declarations.firstRange(of: "export interface Metadata")?.lowerBound
+        )
+        let companionIndex = try #require(
+            declarations.firstRange(of: "export const answer")?.lowerBound
+        )
+        #expect(schemaIndex < companionIndex)
     }
 
     @Test("structured TSDoc describes complete function behavior to IDEs")
@@ -702,6 +846,113 @@ struct TypeScriptToolingExamplesTests {
         }
     }
 
+    @Test("invalid and unknown declaration scopes fail deterministically")
+    func invalidScopesFailDeterministically() async throws {
+        let invalidNamespace = TypeScriptSchema.interface(
+            "Value",
+            scope: .namespace("Acme..Models"),
+            properties: []
+        )
+        let unknownModule = TypeScriptSchema.interface(
+            "Value",
+            scope: .module("missing"),
+            properties: []
+        )
+        let runtime = try JavaScriptRuntime()
+
+        do {
+            _ = try await runtime.environmentDescription(including: [invalidNamespace])
+                .typeScriptDeclarations()
+            Issue.record("Generation unexpectedly accepted an invalid namespace.")
+        } catch let error as TypeScriptToolingError {
+            #expect(error.message.contains("Acme..Models"))
+        }
+
+        do {
+            _ = try await runtime.environmentDescription(including: [unknownModule])
+                .typeScriptDeclarations()
+            Issue.record("Generation unexpectedly accepted an unknown module scope.")
+        } catch let error as TypeScriptToolingError {
+            #expect(error.message.contains("unknown module 'missing'"))
+        }
+    }
+
+    @Test("missing cross-scope references identify their destination")
+    func missingCrossScopeReferencesIdentifyTheirDestination() async throws {
+        let schema = TypeScriptSchema(
+            type: .named("Missing", scope: .module("host:users")),
+            definitions: [],
+            scope: .global
+        )
+        let runtime = try JavaScriptRuntime()
+        try await runtime.defineModule("host:users") { _ in }
+
+        do {
+            _ = try await runtime.environmentDescription(including: [schema])
+                .typeScriptDeclarations()
+            Issue.record("Generation unexpectedly accepted a missing module type.")
+        } catch let error as TypeScriptToolingError {
+            #expect(error.message.contains("module 'host:users'.Missing"))
+        }
+    }
+
+    @Test("definition overrides support explicit cross-scope references")
+    func definitionOverridesSupportCrossScopeReferences() async throws {
+        let schema = TypeScriptSchema(
+            type: .named("Container"),
+            definitions: [
+                .interface(
+                    name: "Container",
+                    properties: [
+                        .init(
+                            "value",
+                            type: .named("Shared", scope: "Shared.Models")
+                        ),
+                    ]
+                ),
+                .alias(
+                    name: "Shared",
+                    scope: "Shared.Models",
+                    type: .string
+                ),
+            ],
+            scope: "Feature.Models"
+        )
+        let runtime = try JavaScriptRuntime()
+        let declarations = try await runtime.environmentDescription(including: [schema])
+            .typeScriptDeclarations()
+
+        #expect(declarations.contains("value: Shared.Models.Shared;"))
+        #expect(declarations.contains("type Shared = string;"))
+    }
+
+    @Test("global references reject lexical shadowing")
+    func globalReferencesRejectShadowing() async throws {
+        let schema = TypeScriptSchema(
+            type: .named("Container"),
+            definitions: [
+                .alias(name: "Value", scope: .global, type: .string),
+                .alias(name: "Value", type: .number),
+                .interface(
+                    name: "Container",
+                    properties: [
+                        .init("value", type: .named("Value", scope: .global)),
+                    ]
+                ),
+            ],
+            scope: "Feature"
+        )
+        let runtime = try JavaScriptRuntime()
+        let environment = try await runtime.environmentDescription(including: [schema])
+
+        do {
+            _ = try environment.typeScriptDeclarations()
+            Issue.record("Generation unexpectedly accepted a shadowed global reference.")
+        } catch let error as TypeScriptToolingError {
+            #expect(error.message.contains("Global TypeScript reference 'Value' is shadowed"))
+        }
+    }
+
     @Test("schemas support aliases recursive interfaces optional properties and literal unions")
     func schemasSupportRelatedDefinitions() async throws {
         let schema = TypeScriptSchema(
@@ -763,6 +1014,24 @@ struct TypeScriptToolingExamplesTests {
             options: .init(completeness: .allowUntyped)
         )
         #expect(declarations.contains("declare module \"untyped\";"))
+    }
+
+    @Test("source modules owning schemas require companion declarations")
+    func sourceModuleSchemasRequireCompanions() async throws {
+        let schema = TypeScriptSchema.interface(
+            "Value",
+            scope: .module("untyped"),
+            properties: [.init("value", type: .number)]
+        )
+        let runtime = try JavaScriptRuntime()
+        try await runtime.registerModule("export const value = 1;", as: "untyped")
+        let environment = try await runtime.environmentDescription(including: [schema])
+
+        #expect(throws: TypeScriptToolingError.self) {
+            try environment.typeScriptDeclarations(
+                options: .init(completeness: .allowUntyped)
+            )
+        }
     }
 
     @Test("canonical Swift representations map to exact TypeScript types")

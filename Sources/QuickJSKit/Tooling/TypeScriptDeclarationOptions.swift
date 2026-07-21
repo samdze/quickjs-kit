@@ -8,8 +8,13 @@ public struct TypeScriptDeclarationOptions: Sendable, Hashable {
         case allowUntyped
     }
 
-    /// The namespace containing named Swift model schemas.
-    public var typeNamespace: String
+    /// The declaration scope used by schemas without an explicit scope.
+    ///
+    /// The default preserves QuickJSKit's original namespaced declarations.
+    /// Set this to ``TypeScriptDeclarationScope/global`` for ambient top-level
+    /// types or to a module scope when every unscoped schema belongs to one
+    /// known JavaScript module.
+    public var defaultTypeScope: TypeScriptDeclarationScope
 
     /// The policy for missing structural metadata.
     public var completeness: Completeness
@@ -19,11 +24,11 @@ public struct TypeScriptDeclarationOptions: Sendable, Hashable {
 
     /// Creates declaration options.
     public init(
-        typeNamespace: String = "QuickJSKit",
+        defaultTypeScope: TypeScriptDeclarationScope = .namespace("QuickJSKit"),
         completeness: Completeness = .strict,
         documentationCompleteness: DocumentationCompleteness = .allowMissing
     ) {
-        self.typeNamespace = typeNamespace
+        self.defaultTypeScope = defaultTypeScope
         self.completeness = completeness
         self.documentationCompleteness = documentationCompleteness
     }

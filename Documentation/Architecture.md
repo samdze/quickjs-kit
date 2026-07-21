@@ -298,8 +298,12 @@ Custom Codable models opt into structural tooling through
 `TypeScriptSchemaProviding`. A schema contains a primary `TypeScriptType` plus
 flat named definitions, allowing recursive and mutually recursive models
 without recursive Swift storage. Primitive and Foundation shapes are inferred
-from the same generic types used by direct conversion. Conflicting named
-definitions fail deterministically; identical definitions are deduplicated.
+from the same generic types used by direct conversion. Each schema chooses one
+canonical declaration scope: ambient global, a dotted namespace, or a known
+JavaScript module. Related definitions may override that scope explicitly.
+Conflicting definitions fail by `(scope, name)`; identical normalized
+definitions are deduplicated, and equal names in different scopes remain
+independent.
 
 `JavaScriptRuntime.environmentDescription()` copies the currently exposed
 Swift-provided globals, exported objects, Swift modules, known source modules,
@@ -309,16 +313,25 @@ thunk. JavaScript-created globals and unknown future loader results are excluded
 The same value model is the output boundary reserved for future runtime
 templates.
 
-Declaration rendering is a pure transformation over that snapshot. Strict
+Declaration rendering is a pure transformation over that snapshot. A focused
+resolver first validates scopes and named references and replaces relative
+schema types with canonical `(scope, name)` identities. The renderer then emits
+global definitions at ambient top level, groups namespace definitions, and
+merges module-owned definitions with the matching module exports. References
+render locally when possible, as qualified namespace names across namespaces,
+or as `import("specifier").Type` across module boundaries. These type-only
+locations never create JavaScript objects or initiate module loading. Strict
 generation rejects custom Codable types without schemas and source modules
 without companion declaration bodies. Permissive generation emits explicit
 `unknown` types and untyped ambient modules. Rendering order and whitespace are
 canonical. Structured TSDoc covers summaries, remarks, parameters, returns,
 errors, examples, links, defaults, and deprecation. User text is normalized and
 escaped so it cannot terminate a comment or inject an unintended block tag.
-Source module
-companions are wrapped under their canonical module specifier; QuickJSKit does
-not infer types from source text.
+Source-module companions remain opaque; generated module-scoped schemas are
+placed before their body under the canonical specifier. QuickJSKit does not
+infer types from source text. A source module owning generated schemas therefore
+requires a companion even in permissive mode; TypeScript cannot safely merge
+typed exports with an open-ended shorthand ambient module.
 
 Documentation completeness is an orthogonal generation policy. Its strict mode
 requires summaries for every generated declaration, parameter descriptions,

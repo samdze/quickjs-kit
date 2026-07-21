@@ -235,6 +235,7 @@ for future macro synthesis:
 extension User: TypeScriptSchemaProviding {
     static let typeScriptSchema = TypeScriptSchema.interface(
         "User",
+        scope: "Acme.Models",
         documentation: "A user visible to embedded scripts.",
         properties: [
             .init(
@@ -254,6 +255,45 @@ extension User: TypeScriptSchemaProviding {
 }
 ```
 
+Every schema has one explicit declaration scope. Global and namespaced types
+are available to scripts without imports; namespaces organize types only and do
+not create JavaScript objects:
+
+```swift
+let global = TypeScriptSchema.interface(
+    "Configuration",
+    scope: .global,
+    properties: [.init("debug", type: .boolean)]
+)
+
+let model = TypeScriptSchema.interface(
+    "User",
+    scope: "Acme.Models",
+    properties: [.init("id", type: .number)]
+)
+```
+
+A schema owned by a known JavaScript module becomes an importable type export:
+
+```swift
+static let typeScriptSchema = TypeScriptSchema.interface(
+    "User",
+    scope: .module("host:users"),
+    properties: [.init("id", type: .number)]
+)
+```
+
+```typescript
+import { loadUser, type User } from "host:users";
+
+const user: User = await loadUser(42);
+```
+
+Functions and values outside that module refer to the same canonical type as
+`import("host:users").User`; this type expression does not perform a runtime
+import. A schema used by several modules remains declared once in its chosen
+scope.
+
 Capture the exact Swift-provided environment after configuring a runtime, then
 render declarations or a complete editor workspace without retaining the
 runtime:
@@ -261,6 +301,10 @@ runtime:
 ```swift
 let environment = try await runtime.environmentDescription()
 let declarations = try environment.typeScriptDeclarations()
+
+let projectDeclarations = try environment.typeScriptDeclarations(
+    options: .init(defaultTypeScope: "MyProject.Models")
+)
 
 let workspace = try environment.typeScriptWorkspace(
     options: .init(
@@ -287,6 +331,12 @@ try await runtime.registerModule(
 )
 ```
 
+Additional schemas may target the same source-module scope. QuickJSKit emits
+those generated type exports before the opaque companion body in one ambient
+module declaration. A source module that owns generated types must provide a
+companion body even in permissive mode, because TypeScript cannot combine a
+typed module body with an open-ended shorthand ambient module safely.
+
 Strict generation reports custom `Codable` types without a schema and source
 modules without companion declarations. `.allowUntyped` is an explicit escape
 hatch that renders these surfaces as `unknown` or untyped ambient modules.
@@ -312,6 +362,10 @@ In this mode, every generated symbol needs a summary, every parameter needs a
 description, non-`Void` functions need return documentation, and throwing
 functions need at least one documented error. Source-module companion bodies
 remain opaque and are responsible for documenting their own exports.
+
+This pre-release API uses `defaultTypeScope` in place of the former
+`typeNamespace` option. `TypeScriptDefinition` is now a value with a nested
+`Kind`, and cross-scope named references identify their destination explicitly.
 
 ## Concurrency and ownership
 

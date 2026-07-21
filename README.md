@@ -137,18 +137,18 @@ standard `EncodingError` and `DecodingError` families with coding paths.
 
 ## Scoped execution and controls
 
-`perform` groups operations under one actor isolation context. Its synchronous
+`run` groups operations under one actor isolation context. Its synchronous
 form cannot suspend; its asynchronous form supports ordinary `try await` and is
 reentrant whenever the operation suspends:
 
 ```swift
-let total = try await runtime.perform { runtime in
+let total = try await runtime.run { runtime in
     let first: Int = try runtime.evaluate("20")
     let second: Int = try runtime.evaluate("22")
     return first + second
 }
 
-let refreshed = try await runtime.perform { runtime in
+let refreshed = try await runtime.run { runtime in
     let user: User = try await runtime.evaluate("loadUser()")
     return user
 }

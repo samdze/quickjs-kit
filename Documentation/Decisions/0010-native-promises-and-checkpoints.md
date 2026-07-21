@@ -1,6 +1,6 @@
 # ADR 0010: Native promises and actor-owned checkpoints
 
-- Status: Accepted
+- Status: Superseded in part by ADR 0015
 - Date: 2026-07-15
 
 ## Context

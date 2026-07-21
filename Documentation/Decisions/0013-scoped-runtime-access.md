@@ -1,6 +1,6 @@
 # ADR 0013: Scoped isolated runtime access
 
-- Status: Accepted
+- Status: Superseded in naming by ADR 0015
 - Date: 2026-07-21
 
 ## Context

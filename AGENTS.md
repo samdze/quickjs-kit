@@ -27,6 +27,8 @@ macro-generated exports.
   interrupts, timeouts, and resource limits.
 - Derive deterministic TypeScript declarations and editor workspaces from the
   same binding metadata used at runtime.
+- Support immutable runtime templates that efficiently instantiate many
+  independent, consistently configured QuickJS heaps.
 - Permit macros to generate binding metadata later without making macros a
   runtime dependency or a second binding system.
 - Maintain strong documentation, diagnostics, tests, and release discipline.
@@ -361,7 +363,7 @@ happy path.
 
 ### Phase 4 — runtime execution, modules, and observability (completed)
 
-- Unified top-level execution scopes, synchronous and asynchronous `perform`,
+- Unified top-level execution scopes, synchronous and asynchronous `run`,
   and immediate typed evaluation.
 - Cancellation, execution deadlines, custom interruption, memory reporting,
   and explicit garbage collection.
@@ -378,6 +380,8 @@ happy path.
 
 - Optional macro target that emits canonical binding descriptions.
 - `@JavaScriptExport`-style actor and type exports.
+- Declarative runtime templates, per-instance Swift export factories, and
+  internal version-bound compilation caches for high-volume runtime creation.
 - Benchmarks, compatibility policy, security guide, DocC catalog, examples,
   release automation, and broad platform CI.
 

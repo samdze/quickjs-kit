@@ -24,6 +24,7 @@ internal enum EngineModuleDiscovery {
 extension QuickJSEngine {
     internal func registerSwiftModule(
         specifier: String,
+        documentation: TypeScriptDocumentation?,
         members: [JavaScriptExportMemberDefinition],
         settle: @escaping BindingSettlement
     ) throws {
@@ -100,6 +101,7 @@ extension QuickJSEngine {
             nativeModuleSpecifiers.insert(specifier)
             environmentModules[specifier] = .swift(
                 specifier: specifier,
+                documentation: documentation,
                 members: members.map(\.environmentDescription)
             )
         } catch {
@@ -143,10 +145,14 @@ extension QuickJSEngine {
         _ source: String,
         specifier: String,
         sourceURL: String,
+        documentation: TypeScriptDocumentation? = nil,
         typeScriptDeclarations: TypeScriptModuleDeclarations? = nil,
         isEnvironmentModule: Bool = true
     ) throws {
         try validateModuleSpecifier(specifier)
+        if let message = TypeScriptDocumentationValidation.message(for: documentation) {
+            throw JavaScriptError(kind: .conversion, message: message)
+        }
         guard moduleSources[specifier] == nil,
               !nativeModuleSpecifiers.contains(specifier) else {
             throw JavaScriptError(
@@ -162,6 +168,7 @@ extension QuickJSEngine {
         if isEnvironmentModule {
             environmentModules[specifier] = .source(
                 specifier: specifier,
+                documentation: documentation,
                 declarations: typeScriptDeclarations
             )
         }
@@ -176,6 +183,7 @@ extension QuickJSEngine {
             source.source,
             specifier: specifier,
             sourceURL: source.sourceURL,
+            documentation: source.documentation,
             typeScriptDeclarations: source.typeScriptDeclarations
         )
     }

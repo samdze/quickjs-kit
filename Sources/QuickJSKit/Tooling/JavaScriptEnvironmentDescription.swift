@@ -33,16 +33,21 @@ public struct JavaScriptEnvironmentDescription: Sendable, Hashable {
 
 private extension EnvironmentGlobalDescription {
     var normalized: Self {
-        guard case let .object(name, members) = self else { return self }
-        return .object(name: name, members: members.sorted { $0.name < $1.name })
+        guard case let .object(name, documentation, members) = self else { return self }
+        return .object(
+            name: name,
+            documentation: documentation,
+            members: members.sorted { $0.name < $1.name }
+        )
     }
 }
 
 private extension EnvironmentModuleDescription {
     var normalized: Self {
-        guard case let .swift(specifier, members) = self else { return self }
+        guard case let .swift(specifier, documentation, members) = self else { return self }
         return .swift(
             specifier: specifier,
+            documentation: documentation,
             members: members.sorted { $0.name < $1.name }
         )
     }

@@ -32,7 +32,7 @@ public struct TypeScriptSchema: Sendable, Hashable {
     /// Creates a schema containing one interface declaration.
     public static func interface(
         _ name: String,
-        documentation: String? = nil,
+        documentation: TypeScriptDocumentation? = nil,
         properties: [TypeScriptProperty]
     ) -> Self {
         Self(
@@ -51,7 +51,7 @@ public struct TypeScriptSchema: Sendable, Hashable {
     public static func alias(
         _ name: String,
         to type: TypeScriptType,
-        documentation: String? = nil
+        documentation: TypeScriptDocumentation? = nil
     ) -> Self {
         Self(
             type: .named(name),
@@ -67,7 +67,7 @@ public struct TypeScriptSchema: Sendable, Hashable {
     /// matching Codable values that do not export a JavaScript enum object.
     public static func enumeration(
         _ name: String,
-        documentation: String? = nil,
+        documentation: TypeScriptDocumentation? = nil,
         cases: [TypeScriptEnumCase]
     ) -> Self {
         Self(
@@ -120,21 +120,21 @@ public enum TypeScriptDefinition: Sendable, Hashable {
     /// A structural interface.
     case interface(
         name: String,
-        documentation: String?,
+        documentation: TypeScriptDocumentation?,
         properties: [TypeScriptProperty]
     )
 
     /// A named type alias.
     case alias(
         name: String,
-        documentation: String?,
+        documentation: TypeScriptDocumentation?,
         type: TypeScriptType
     )
 
     /// A named string or integer literal union.
     case enumeration(
         name: String,
-        documentation: String?,
+        documentation: TypeScriptDocumentation?,
         cases: [TypeScriptEnumCase]
     )
 }
@@ -153,8 +153,11 @@ public struct TypeScriptProperty: Sendable, Hashable {
     /// Whether TypeScript should prevent assignment to this property.
     public let isReadonly: Bool
 
-    /// Documentation rendered as JSDoc.
-    public let documentation: String?
+    /// Structured documentation rendered as TSDoc.
+    public let documentation: TypeScriptDocumentation?
+
+    /// The documented canonical default value, rendered with `@defaultValue`.
+    public let defaultValue: String?
 
     /// Creates an interface property.
     public init(
@@ -162,13 +165,15 @@ public struct TypeScriptProperty: Sendable, Hashable {
         type: TypeScriptType,
         isOptional: Bool = false,
         isReadonly: Bool = false,
-        documentation: String? = nil
+        documentation: TypeScriptDocumentation? = nil,
+        defaultValue: String? = nil
     ) {
         self.name = name
         self.type = type
         self.isOptional = isOptional
         self.isReadonly = isReadonly
         self.documentation = documentation
+        self.defaultValue = defaultValue
     }
 }
 
@@ -180,14 +185,14 @@ public struct TypeScriptEnumCase: Sendable, Hashable {
     /// The encoded JavaScript literal.
     public let value: TypeScriptLiteral
 
-    /// Documentation rendered beside this literal.
-    public let documentation: String?
+    /// Structured documentation summarized in the literal union's TSDoc.
+    public let documentation: TypeScriptDocumentation?
 
     /// Creates a literal-union case.
     public init(
         _ name: String,
         value: TypeScriptLiteral,
-        documentation: String? = nil
+        documentation: TypeScriptDocumentation? = nil
     ) {
         self.name = name
         self.value = value

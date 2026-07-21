@@ -14,14 +14,27 @@ public struct TypeScriptDeclarationOptions: Sendable, Hashable {
     /// The policy for missing structural metadata.
     public var completeness: Completeness
 
+    /// How generation handles missing TSDoc metadata.
+    public var documentationCompleteness: DocumentationCompleteness
+
     /// Creates declaration options.
     public init(
         typeNamespace: String = "QuickJSKit",
-        completeness: Completeness = .strict
+        completeness: Completeness = .strict,
+        documentationCompleteness: DocumentationCompleteness = .allowMissing
     ) {
         self.typeNamespace = typeNamespace
         self.completeness = completeness
+        self.documentationCompleteness = documentationCompleteness
     }
+}
+
+/// Controls whether every generated declaration must have complete TSDoc.
+public enum DocumentationCompleteness: Sendable, Hashable {
+    /// Generate declarations when some documentation is absent.
+    case allowMissing
+    /// Reject generated declarations with incomplete documentation.
+    case requireComplete
 }
 
 /// A deterministic failure while generating TypeScript tooling.

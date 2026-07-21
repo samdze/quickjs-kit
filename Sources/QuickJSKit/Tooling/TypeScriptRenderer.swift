@@ -5,6 +5,9 @@ internal struct TypeScriptRenderer {
     internal let options: TypeScriptDeclarationOptions
 
     private var allowsUntyped: Bool { options.completeness == .allowUntyped }
+    private var requiresCompleteDocumentation: Bool {
+        options.documentationCompleteness == .requireComplete
+    }
 
     internal func render() throws -> String {
         guard Self.isIdentifier(options.typeNamespace) else {
@@ -111,7 +114,7 @@ internal struct TypeScriptRenderer {
     ) {
         switch global {
         case let .function(function): collectSchemas(from: function, into: &schemas)
-        case let .object(_, members):
+        case let .object(_, _, members):
             for member in members { collectSchemas(from: member, into: &schemas) }
         case let .value(value): collectSchemas(from: value.type, into: &schemas)
         }
@@ -121,7 +124,7 @@ internal struct TypeScriptRenderer {
         from module: EnvironmentModuleDescription,
         into schemas: inout [TypeScriptSchema]
     ) {
-        guard case let .swift(_, members) = module else { return }
+        guard case let .swift(_, _, members) = module else { return }
         for member in members { collectSchemas(from: member, into: &schemas) }
     }
 
@@ -160,6 +163,7 @@ internal struct TypeScriptRenderer {
     }
 
     private func validate(_ definition: TypeScriptDefinition) throws {
+        try validateDocumentation(definition.documentation, at: "TypeScript definition '\(definition.name)'")
         switch definition {
         case let .interface(_, _, properties):
             var names: Set<String> = []
@@ -167,6 +171,16 @@ internal struct TypeScriptRenderer {
                 guard names.insert(property.name).inserted else {
                     throw TypeScriptToolingError(
                         "The TypeScript interface '\(definition.name)' contains duplicate property '\(property.name)'."
+                    )
+                }
+                try validateDocumentation(
+                    property.documentation,
+                    at: "TypeScript property '\(definition.name).\(property.name)'"
+                )
+                if property.defaultValue?.contains("\0") == true {
+                    throw TypeScriptToolingError(
+                        "The default value for TypeScript property "
+                            + "'\(definition.name).\(property.name)' must contain no NUL characters."
                     )
                 }
             }
@@ -184,6 +198,12 @@ internal struct TypeScriptRenderer {
                     "The TypeScript literal union '\(definition.name)' contains duplicate values."
                 )
             }
+            for enumCase in cases {
+                try validateDocumentation(
+                    enumCase.documentation,
+                    at: "TypeScript enum case '\(definition.name).\(enumCase.name)'"
+                )
+            }
         }
     }
 
@@ -191,12 +211,33 @@ internal struct TypeScriptRenderer {
         let documentation: String?
         if case let .enumeration(_, baseDocumentation, cases) = definition {
             let documentedCases = cases.compactMap { enumCase -> String? in
-                guard let caseDocumentation = enumCase.documentation else { return nil }
-                return "- \(enumCase.name) (\(render(enumCase.value))): \(caseDocumentation)"
+                guard let documentation = enumCase.documentation,
+                      !normalized(documentation.summary).isEmpty else { return nil }
+                let summary = documentation.summary
+                var lines = [
+                    "- `\(enumCase.name)` (`\(render(enumCase.value))`): \(summary)",
+                ]
+                if let remarks = documentation.remarks, !normalized(remarks).isEmpty {
+                    lines.append("  Remarks: \(remarks)")
+                }
+                for example in documentation.examples {
+                    let title = example.title.map { " \($0)" } ?? ""
+                    lines.append("  Example\(title):\n\(example.body)")
+                }
+                for reference in documentation.seeAlso {
+                    lines.append("  See: \(reference)")
+                }
+                if let deprecated = documentation.deprecated,
+                   !normalized(deprecated).isEmpty {
+                    lines.append("  Deprecated: \(deprecated)")
+                }
+                return lines.joined(separator: "\n")
             }
             documentation = jsDoc(
-                ([baseDocumentation].compactMap { $0 } + documentedCases)
-                    .joined(separator: "\n")
+                baseDocumentation,
+                additionalRemarks: documentedCases.isEmpty
+                    ? []
+                    : ["Cases:\n" + documentedCases.joined(separator: "\n")]
             )
         } else {
             documentation = jsDoc(definition.documentation)
@@ -205,7 +246,10 @@ internal struct TypeScriptRenderer {
         switch definition {
         case let .interface(name, _, properties):
             let body = try properties.map { property in
-                let documentation = jsDoc(property.documentation)
+                let documentation = jsDoc(
+                    property.documentation,
+                    defaultValue: property.defaultValue
+                )
                 let readonly = property.isReadonly ? "readonly " : ""
                 let optional = property.isOptional ? "?" : ""
                 let line = "\(readonly)\(propertyKey(property.name))\(optional): \(try render(property.type, qualified: false));"
@@ -228,26 +272,44 @@ internal struct TypeScriptRenderer {
         }
         switch global {
         case let .function(function):
-            return try renderFunction(function, prefix: "declare function", suffix: ";")
+            return try renderFunction(
+                function,
+                prefix: "declare function",
+                suffix: ";",
+                documentationLocation: "global function '\(function.name)'"
+            )
         case let .value(value):
+            try validateDocumentation(value.documentation, at: "global value '\(value.name)'")
             let declaration = "declare let \(value.name): \(try render(value.type, position: .result));"
             return [jsDoc(value.documentation), declaration].compactMap { $0 }.joined(separator: "\n")
-        case let .object(name, members):
-            let body = try members.map(renderObjectMember).joined(separator: "\n")
-            return "declare const \(name): {\n\(indent(body))\n};"
+        case let .object(name, documentation, members):
+            try validateDocumentation(documentation, at: "exported object '\(name)'")
+            let body = try members.map {
+                try renderObjectMember($0, objectName: name)
+            }.joined(separator: "\n")
+            let declaration = "declare const \(name): {\n\(indent(body))\n};"
+            return [jsDoc(documentation), declaration].compactMap { $0 }.joined(separator: "\n")
         }
     }
 
-    private func renderObjectMember(_ member: EnvironmentMemberDescription) throws -> String {
+    private func renderObjectMember(
+        _ member: EnvironmentMemberDescription,
+        objectName: String
+    ) throws -> String {
         switch member {
         case let .function(function):
             return try renderFunction(
                 function,
                 prefix: "readonly \(propertyKey(function.name))",
                 suffix: ";",
-                asProperty: true
+                asProperty: true,
+                documentationLocation: "exported method '\(objectName).\(function.name)'"
             )
         case let .value(value):
+            try validateDocumentation(
+                value.documentation,
+                at: "exported value '\(objectName).\(value.name)'"
+            )
             let declaration = "readonly \(propertyKey(value.name)): \(try render(value.type, position: .result));"
             return [jsDoc(value.documentation), declaration].compactMap { $0 }.joined(separator: "\n")
         }
@@ -255,22 +317,33 @@ internal struct TypeScriptRenderer {
 
     private func renderModule(_ module: EnvironmentModuleDescription) throws -> String {
         switch module {
-        case let .source(specifier, declarations?):
-            return "declare module \(quotedJSONString(specifier)) {\n\(indent(declarations.body))\n}"
-        case let .source(specifier, nil):
+        case let .source(specifier, documentation, declarations?):
+            try validateDocumentation(documentation, at: "source module '\(specifier)'")
+            let declaration = "declare module \(quotedJSONString(specifier)) {\n\(indent(declarations.body))\n}"
+            return [jsDoc(documentation), declaration].compactMap { $0 }.joined(separator: "\n")
+        case let .source(specifier, documentation, nil):
+            try validateDocumentation(documentation, at: "source module '\(specifier)'")
             guard allowsUntyped else {
                 throw TypeScriptToolingError(
                     "Source module '\(specifier)' has no companion TypeScript declarations."
                 )
             }
-            return "declare module \(quotedJSONString(specifier));"
-        case let .swift(specifier, members):
-            let body = try members.map(renderModuleMember).joined(separator: "\n\n")
-            return "declare module \(quotedJSONString(specifier)) {\n\(indent(body))\n}"
+            let declaration = "declare module \(quotedJSONString(specifier));"
+            return [jsDoc(documentation), declaration].compactMap { $0 }.joined(separator: "\n")
+        case let .swift(specifier, documentation, members):
+            try validateDocumentation(documentation, at: "Swift module '\(specifier)'")
+            let body = try members.map {
+                try renderModuleMember($0, specifier: specifier)
+            }.joined(separator: "\n\n")
+            let declaration = "declare module \(quotedJSONString(specifier)) {\n\(indent(body))\n}"
+            return [jsDoc(documentation), declaration].compactMap { $0 }.joined(separator: "\n")
         }
     }
 
-    private func renderModuleMember(_ member: EnvironmentMemberDescription) throws -> String {
+    private func renderModuleMember(
+        _ member: EnvironmentMemberDescription,
+        specifier: String
+    ) throws -> String {
         guard member.name == "default" || Self.isIdentifier(member.name) else {
             throw TypeScriptToolingError(
                 "Module export name '\(member.name)' cannot be represented as a TypeScript declaration."
@@ -280,14 +353,35 @@ internal struct TypeScriptRenderer {
         case let .function(function) where function.name == "default":
             let type = try functionType(function)
             let declaration = "const defaultExport: \(type);\nexport default defaultExport;"
-            return [jsDoc(function.documentation, throws: function.effects.isThrowing), declaration]
+            return [
+                try functionJSDoc(
+                    function,
+                    at: "default function export of module '\(specifier)'"
+                ),
+                declaration,
+            ]
                 .compactMap { $0 }.joined(separator: "\n")
         case let .function(function):
-            return try renderFunction(function, prefix: "export function", suffix: ";")
+            return try renderFunction(
+                function,
+                prefix: "export function",
+                suffix: ";",
+                documentationLocation: "function export '\(function.name)' of module '\(specifier)'"
+            )
         case let .value(value) where value.name == "default":
-            let declaration = "const defaultExport: \(try render(value.type, position: .result));\nexport default defaultExport;"
+            try validateDocumentation(
+                value.documentation,
+                at: "default value export of module '\(specifier)'"
+            )
+            let declaration = "const defaultExport: "
+                + "\(try render(value.type, position: .result));\n"
+                + "export default defaultExport;"
             return [jsDoc(value.documentation), declaration].compactMap { $0 }.joined(separator: "\n")
         case let .value(value):
+            try validateDocumentation(
+                value.documentation,
+                at: "value export '\(value.name)' of module '\(specifier)'"
+            )
             let declaration = "export const \(value.name): \(try render(value.type, position: .result));"
             return [jsDoc(value.documentation), declaration].compactMap { $0 }.joined(separator: "\n")
         }
@@ -297,7 +391,8 @@ internal struct TypeScriptRenderer {
         _ function: EnvironmentFunctionDescription,
         prefix: String,
         suffix: String,
-        asProperty: Bool = false
+        asProperty: Bool = false,
+        documentationLocation: String
     ) throws -> String {
         let parameters = try renderParameters(function.parameters)
         let result = try renderFunctionResult(function)
@@ -307,7 +402,7 @@ internal struct TypeScriptRenderer {
         } else {
             declaration = "\(prefix) \(function.name)(\(parameters)): \(result)\(suffix)"
         }
-        return [jsDoc(function.documentation, throws: function.effects.isThrowing), declaration]
+        return [try functionJSDoc(function, at: documentationLocation), declaration]
             .compactMap { $0 }.joined(separator: "\n")
     }
 
@@ -415,15 +510,203 @@ internal struct TypeScriptRenderer {
         }
     }
 
-    private func jsDoc(_ documentation: String?, throws: Bool = false) -> String? {
-        var lines = documentation?
-            .replacingOccurrences(of: "*/", with: "*\\/")
-            .split(whereSeparator: { $0.isNewline })
-            .map(String.init) ?? []
-        if `throws` { lines.append("@throws When the Swift operation fails.") }
-        guard !lines.isEmpty else { return nil }
-        if lines.count == 1 { return "/** \(lines[0]) */" }
-        return (["/**"] + lines.map { " * \($0)" } + [" */"]).joined(separator: "\n")
+    private func functionJSDoc(
+        _ function: EnvironmentFunctionDescription,
+        at location: String
+    ) throws -> String? {
+        if let message = TypeScriptDocumentationValidation.message(
+            for: function.documentation,
+            parameterNames: function.parameters.map(\.name)
+        ) {
+            throw TypeScriptToolingError("Invalid documentation for \(location): \(message)")
+        }
+
+        if requiresCompleteDocumentation {
+            guard let documentation = function.documentation,
+                  !normalized(documentation.summary).isEmpty else {
+                throw missingDocumentation("summary", at: location)
+            }
+            for parameter in function.parameters {
+                guard let value = documentation.parameters[parameter.name],
+                      !normalized(value).isEmpty else {
+                    throw missingDocumentation(
+                        "parameter '\(parameter.name)'",
+                        at: location
+                    )
+                }
+            }
+            if function.result != .void,
+               normalized(documentation.returns ?? "").isEmpty {
+                throw missingDocumentation("return value", at: location)
+            }
+            if function.effects.isThrowing,
+               !documentation.errors.contains(where: {
+                   !normalized($0.description).isEmpty
+               }) {
+                throw missingDocumentation("thrown error", at: location)
+            }
+        }
+
+        guard let documentation = function.documentation else {
+            if function.effects.isThrowing {
+                return renderJSDoc(sections: [["@throws When the Swift operation fails."]])
+            }
+            return nil
+        }
+
+        var sections: [[String]] = []
+        appendText(documentation.summary, to: &sections)
+        appendBlockTag("@remarks", documentation.remarks, to: &sections)
+        for parameter in function.parameters {
+            guard let value = documentation.parameters[parameter.name] else { continue }
+            appendTaggedText("@param \(parameter.name) -", value, to: &sections)
+        }
+        appendTaggedText("@returns", documentation.returns, to: &sections)
+        if documentation.errors.isEmpty, function.effects.isThrowing {
+            sections.append(["@throws When the Swift operation fails."])
+        } else {
+            for error in documentation.errors {
+                let tag = error.reference.map { "@throws {@link \($0)}" } ?? "@throws"
+                appendBlockTag(tag, error.description, to: &sections)
+            }
+        }
+        appendExamples(documentation.examples, to: &sections)
+        for reference in documentation.seeAlso {
+            appendTaggedText("@see", reference, to: &sections)
+        }
+        appendTaggedText("@deprecated", documentation.deprecated, to: &sections)
+        return renderJSDoc(sections: sections)
+    }
+
+    private func jsDoc(
+        _ documentation: TypeScriptDocumentation?,
+        defaultValue: String? = nil,
+        additionalRemarks: [String] = []
+    ) -> String? {
+        guard documentation != nil || defaultValue != nil || !additionalRemarks.isEmpty else {
+            return nil
+        }
+        var sections: [[String]] = []
+        if let documentation {
+            appendText(documentation.summary, to: &sections)
+            appendBlockTag("@remarks", documentation.remarks, to: &sections)
+        }
+        for remarks in additionalRemarks {
+            appendBlockTag("@remarks", remarks, to: &sections)
+        }
+        appendTaggedText("@defaultValue", defaultValue, to: &sections)
+        if let documentation {
+            appendExamples(documentation.examples, to: &sections)
+            for reference in documentation.seeAlso {
+                appendTaggedText("@see", reference, to: &sections)
+            }
+            appendTaggedText("@deprecated", documentation.deprecated, to: &sections)
+        }
+        return renderJSDoc(sections: sections)
+    }
+
+    private func validateDocumentation(
+        _ documentation: TypeScriptDocumentation?,
+        at location: String
+    ) throws {
+        if let message = TypeScriptDocumentationValidation.message(for: documentation) {
+            throw TypeScriptToolingError("Invalid documentation for \(location): \(message)")
+        }
+        if requiresCompleteDocumentation,
+           normalized(documentation?.summary ?? "").isEmpty {
+            throw missingDocumentation("summary", at: location)
+        }
+    }
+
+    private func missingDocumentation(_ field: String, at location: String) -> TypeScriptToolingError {
+        TypeScriptToolingError("Complete TSDoc requires a \(field) for \(location).")
+    }
+
+    private func appendText(_ value: String, to sections: inout [[String]]) {
+        let lines = documentationLines(value)
+        if !lines.isEmpty { sections.append(lines) }
+    }
+
+    private func appendTaggedText(
+        _ tag: String,
+        _ value: String?,
+        to sections: inout [[String]]
+    ) {
+        guard let value else { return }
+        var lines = documentationLines(value)
+        guard !lines.isEmpty else { return }
+        lines[0] = "\(tag) \(lines[0])"
+        sections.append(lines)
+    }
+
+    private func appendBlockTag(
+        _ tag: String,
+        _ value: String?,
+        to sections: inout [[String]]
+    ) {
+        guard let value else { return }
+        let lines = documentationLines(value)
+        guard !lines.isEmpty else { return }
+        sections.append([tag] + lines)
+    }
+
+    private func appendExamples(
+        _ examples: [TypeScriptDocumentation.Example],
+        to sections: inout [[String]]
+    ) {
+        for example in examples {
+            let tag = example.title.map { "@example \(sanitizeLine($0))" } ?? "@example"
+            var lines = documentationLines(example.body)
+            if lines.isEmpty {
+                sections.append([tag])
+            } else {
+                lines.insert(tag, at: 0)
+                sections.append(lines)
+            }
+        }
+    }
+
+    private func renderJSDoc(sections: [[String]]) -> String? {
+        let sections = sections.filter { !$0.isEmpty }
+        guard !sections.isEmpty else { return nil }
+        if sections.count == 1, sections[0].count == 1,
+           !sections[0][0].hasPrefix("@") {
+            return "/** \(sections[0][0]) */"
+        }
+        var lines = ["/**"]
+        for (index, section) in sections.enumerated() {
+            if index > 0 { lines.append(" *") }
+            lines.append(contentsOf: section.map { $0.isEmpty ? " *" : " * \($0)" })
+        }
+        lines.append(" */")
+        return lines.joined(separator: "\n")
+    }
+
+    private func documentationLines(_ value: String) -> [String] {
+        normalized(value)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { sanitizeLine(String($0)) }
+    }
+
+    private func normalized(_ value: String) -> String {
+        let lines = value.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        let first = lines.firstIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let last = lines.lastIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard let first, let last else { return "" }
+        return lines[first...last].joined(separator: "\n")
+    }
+
+    private func sanitizeLine(_ value: String) -> String {
+        var result = value.replacingOccurrences(of: "*/", with: "*\\/")
+        let indentation = result.prefix { $0 == " " || $0 == "\t" }
+        let content = result.dropFirst(indentation.count)
+        if content.hasPrefix("@") {
+            result = String(indentation) + "&#64;" + content.dropFirst()
+        }
+        return result
     }
 
     private func propertyKey(_ value: String) -> String {
@@ -496,7 +779,7 @@ private extension TypeScriptDefinition {
         }
     }
 
-    var documentation: String? {
+    var documentation: TypeScriptDocumentation? {
         switch self {
         case let .interface(_, documentation, _),
              let .alias(_, documentation, _),

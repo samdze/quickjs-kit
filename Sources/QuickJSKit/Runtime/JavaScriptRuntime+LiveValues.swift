@@ -52,8 +52,10 @@ extension JavaScriptRuntime {
     internal func set<T: Encodable & Sendable>(
         _ value: T,
         forProperty name: String,
+        documentation: TypeScriptDocumentation?,
         on reference: JavaScriptReference
     ) throws {
+        try validatePropertyDocumentation(documentation, on: reference)
         try engine.withEngineEntry() {
             try validate(reference)
             let raw = try engine.encode(
@@ -68,7 +70,7 @@ extension JavaScriptRuntime {
                         EnvironmentValueDescription(
                             name: name,
                             type: bindingTypeShape(for: T.self),
-                            documentation: nil,
+                            documentation: documentation,
                             isReadOnly: false
                         )
                     )
@@ -80,8 +82,10 @@ extension JavaScriptRuntime {
     internal func set(
         _ value: JavaScriptValue,
         forProperty name: String,
+        documentation: TypeScriptDocumentation?,
         on reference: JavaScriptReference
     ) throws {
+        try validatePropertyDocumentation(documentation, on: reference)
         try engine.withEngineEntry() {
             try validate(reference)
             try validate(value)
@@ -94,7 +98,7 @@ extension JavaScriptRuntime {
                         EnvironmentValueDescription(
                             name: name,
                             type: bindingTypeShape(for: value),
-                            documentation: nil,
+                            documentation: documentation,
                             isReadOnly: false
                         )
                     )
@@ -252,5 +256,21 @@ extension JavaScriptRuntime {
     internal func validate(_ value: JavaScriptValue) throws {
         guard case let .reference(reference) = value.storage else { return }
         try validate(reference)
+    }
+
+    private func validatePropertyDocumentation(
+        _ documentation: TypeScriptDocumentation?,
+        on reference: JavaScriptReference
+    ) throws {
+        guard documentation != nil else { return }
+        guard reference.identifier == 0 else {
+            throw JavaScriptError(
+                kind: .conversion,
+                message: "TypeScript documentation can be attached only to runtime global properties."
+            )
+        }
+        if let message = TypeScriptDocumentationValidation.message(for: documentation) {
+            throw JavaScriptError(kind: .conversion, message: message)
+        }
     }
 }

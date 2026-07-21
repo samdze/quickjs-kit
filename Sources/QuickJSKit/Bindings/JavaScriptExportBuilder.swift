@@ -1,8 +1,8 @@
 /// A transactional description of Swift members exported to JavaScript.
 ///
-/// Configure exports inside ``JavaScriptRuntime/export(_:as:_:)`` or
-/// ``JavaScriptRuntime/defineModule(_:_:)``. The destination runtime validates
-/// and encodes every member before publishing it.
+/// Configure exports inside ``JavaScriptRuntime/export(_:as:documentation:_:)``
+/// or ``JavaScriptRuntime/defineModule(_:documentation:_:)``. The destination
+/// runtime validates and encodes every member before publishing it.
 public struct JavaScriptExportBuilder {
     internal var members: [JavaScriptExportMemberDefinition] = []
 
@@ -172,13 +172,14 @@ public struct JavaScriptExportBuilder {
     public mutating func value<Value: Encodable & Sendable>(
         _ value: Value,
         as name: String,
-        documentation: String? = nil
+        documentation: TypeScriptDocumentation? = nil
     ) {
         members.append(
             JavaScriptExportMemberDefinition(
                 name: name,
                 documentation: documentation,
-                validationMessage: exportMemberValidationMessage(name),
+                validationMessage: exportMemberValidationMessage(name)
+                    ?? TypeScriptDocumentationValidation.message(for: documentation),
                 storage: .value(
                     type: bindingTypeShape(for: Value.self),
                     encode: { engine in
@@ -196,13 +197,14 @@ public struct JavaScriptExportBuilder {
     public mutating func value(
         _ value: JavaScriptValue,
         as name: String,
-        documentation: String? = nil
+        documentation: TypeScriptDocumentation? = nil
     ) {
         members.append(
             JavaScriptExportMemberDefinition(
                 name: name,
                 documentation: documentation,
-                validationMessage: exportMemberValidationMessage(name),
+                validationMessage: exportMemberValidationMessage(name)
+                    ?? TypeScriptDocumentationValidation.message(for: documentation),
                 storage: .liveValue(type: bindingTypeShape(for: value), value: value)
             )
         )
@@ -284,7 +286,12 @@ public struct JavaScriptExportBuilder {
             arity: parameterShapes.count
         )
         let names = parameters.names
-        let validationMessage = parameters.message ?? exportMemberValidationMessage(name)
+        let validationMessage = parameters.message
+            ?? exportMemberValidationMessage(name)
+            ?? TypeScriptDocumentationValidation.message(
+                for: options.documentation,
+                parameterNames: names
+            )
         let draft = BindingDraft(
             name: name,
             parameters: zip(names, parameterShapes).map {
@@ -297,7 +304,7 @@ public struct JavaScriptExportBuilder {
         members.append(
             JavaScriptExportMemberDefinition(
                 name: name,
-                documentation: options.documentation,
+                documentation: nil,
                 validationMessage: validationMessage,
                 storage: .function(
                     BindingDefinition(draft: draft, invoke: invocation)
@@ -322,7 +329,7 @@ internal struct JavaScriptExportMemberDefinition: Sendable {
     }
 
     internal let name: String
-    internal let documentation: String?
+    internal let documentation: TypeScriptDocumentation?
     internal let validationMessage: String?
     internal let storage: Storage
 }
@@ -332,13 +339,26 @@ extension JavaScriptRuntime {
     ///
     /// The operation is transactional: the global object is unchanged if any
     /// member fails validation or encoding.
+    ///
+    /// - Parameters:
+    ///   - root: The actor or object retained by the export binding.
+    ///   - name: The property installed on the JavaScript global object.
+    ///   - documentation: Structured TSDoc for the exported object container.
+    ///   - configure: A closure that explicitly selects exported members.
+    /// - Returns: A handle controlling the export's runtime lifecycle.
+    /// - Throws: ``JavaScriptError`` when validation, encoding, or publication
+    ///   fails. Nothing is published on failure.
     @discardableResult
     public func export<Root: AnyObject & Sendable>(
         _ root: Root,
         as name: String,
+        documentation: TypeScriptDocumentation? = nil,
         _ configure: @Sendable (Root, inout JavaScriptExportBuilder) -> Void
     ) throws -> JavaScriptBinding {
         if let message = BindingValidation.nameMessage(name, role: "Export names") {
+            throw JavaScriptError(kind: .conversion, message: message)
+        }
+        if let message = TypeScriptDocumentationValidation.message(for: documentation) {
             throw JavaScriptError(kind: .conversion, message: message)
         }
         var builder = JavaScriptExportBuilder()
@@ -350,6 +370,7 @@ extension JavaScriptRuntime {
         return try engine.withEngineEntry() {
             let (identifier, rawValue) = try engine.registerExport(
                 named: name,
+                documentation: documentation,
                 root: root,
                 members: builder.members,
                 settle: bindingSettlement

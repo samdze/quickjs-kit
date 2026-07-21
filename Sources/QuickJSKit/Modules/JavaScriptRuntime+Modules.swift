@@ -14,17 +14,23 @@ extension JavaScriptRuntime {
     ///   - source: ES module source code.
     ///   - specifier: The canonical runtime-local module specifier.
     ///   - sourceURL: An optional diagnostic and `import.meta.url` identity.
+    ///   - documentation: Structured TSDoc for the source module container.
     ///   - typeScriptDeclarations: Optional declarations for tooling snapshots.
     public func registerModule(
         _ source: String,
         as specifier: String,
         sourceURL: String? = nil,
+        documentation: TypeScriptDocumentation? = nil,
         typeScriptDeclarations: TypeScriptModuleDeclarations? = nil
     ) throws {
+        if let message = TypeScriptDocumentationValidation.message(for: documentation) {
+            throw JavaScriptError(kind: .conversion, message: message)
+        }
         try engine.registerModuleSource(
             source,
             specifier: specifier,
             sourceURL: sourceURL ?? specifier,
+            documentation: documentation,
             typeScriptDeclarations: typeScriptDeclarations
         )
     }

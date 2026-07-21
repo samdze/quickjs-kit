@@ -41,7 +41,7 @@ internal struct BindingDescription: Sendable, Hashable {
     internal let parameters: [BindingParameterDescription]
     internal let result: BindingTypeShape
     internal let effects: Effects
-    internal let documentation: String?
+    internal let documentation: TypeScriptFunctionDocumentation?
     internal let order: UInt64
 }
 
@@ -50,7 +50,7 @@ internal struct BindingDraft: Sendable {
     internal let parameters: [BindingParameterDescription]
     internal let result: BindingTypeShape
     internal let effects: BindingDescription.Effects
-    internal let documentation: String?
+    internal let documentation: TypeScriptFunctionDocumentation?
 
     internal func finalize(
         location: BindingDescription.Location,

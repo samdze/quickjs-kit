@@ -24,20 +24,26 @@ public struct JavaScriptModuleSource: Sendable, Hashable {
     /// Optional TypeScript declarations describing this module's exports.
     public let typeScriptDeclarations: TypeScriptModuleDeclarations?
 
+    /// Structured TSDoc describing the module as a whole.
+    public let documentation: TypeScriptDocumentation?
+
     /// Creates loaded module source.
     ///
     /// - Parameters:
     ///   - source: ES module source code.
     ///   - sourceURL: The diagnostic and `import.meta.url` identity.
+    ///   - documentation: Structured TSDoc for the loaded module container.
     ///   - typeScriptDeclarations: Optional declarations included in future
     ///     environment snapshots after this source is loaded.
     public init(
         source: String,
         sourceURL: String,
+        documentation: TypeScriptDocumentation? = nil,
         typeScriptDeclarations: TypeScriptModuleDeclarations? = nil
     ) {
         self.source = source
         self.sourceURL = sourceURL
+        self.documentation = documentation
         self.typeScriptDeclarations = typeScriptDeclarations
     }
 }

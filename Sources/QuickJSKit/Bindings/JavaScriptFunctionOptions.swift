@@ -4,13 +4,13 @@ public struct JavaScriptFunctionOptions: Sendable, Hashable {
     /// `argument1`, and so on.
     public var parameterNames: [String]?
 
-    /// Human-readable API documentation retained for declaration generation.
-    public var documentation: String?
+    /// Structured TSDoc retained for declaration generation and IDE tooling.
+    public var documentation: TypeScriptFunctionDocumentation?
 
     /// Creates function registration options.
     public init(
         parameterNames: [String]? = nil,
-        documentation: String? = nil
+        documentation: TypeScriptFunctionDocumentation? = nil
     ) {
         self.parameterNames = parameterNames
         self.documentation = documentation

@@ -183,6 +183,7 @@ extension QuickJSEngine {
 
     internal func registerExport(
         named name: String,
+        documentation: TypeScriptDocumentation?,
         root: any AnyObject & Sendable,
         members: [JavaScriptExportMemberDefinition],
         settle: @escaping BindingSettlement
@@ -273,6 +274,7 @@ extension QuickJSEngine {
                 bindingIdentifier: exportIdentifier,
                 description: .object(
                     name: name,
+                    documentation: documentation,
                     members: members.map(\.environmentDescription)
                 )
             )

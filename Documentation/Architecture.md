@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the implemented Phase 3 architecture and the stable
+This document describes the implemented Phase 4 architecture and the stable
 boundaries reserved for later platform capabilities. Features identified as
 future work are design constraints, not current API promises.
 
@@ -13,13 +13,15 @@ Swift tasks
     │ await
     ▼
 JavaScriptRuntime actor
-    ├── evaluation, globals, runtime-bound codecs, and typed bindings
+    ├── scoped execution, evaluation, globals, and runtime-bound codecs
     ├── native Promise jobs, host waiters, cancellation, and rejection reports
+    ├── ES modules, Swift modules, and asynchronous source loading
     ├── live-value identity and lifetime coordination
     └── QuickJSEngine (internal, non-Sendable)
             ├── one JSRuntime heap and one JSContext realm
+            ├── one top-level execution scope and interrupt callback
             ├── canonical actor-owned live-value registry
-            ├── canonical binding registry and detached descriptions
+            ├── canonical module and binding registries
             ├── direct Encoder and Decoder containers
             ├── RAII owners for temporary and retained JSValue values
             └── CQuickJS
@@ -38,6 +40,29 @@ The public API divides values into two categories:
   their runtime and delegate every operation to its actor.
 
 No public or `Sendable` stored property contains a C value or pointer.
+
+## Unified execution lifecycle
+
+Every operation that parses, executes, calls, links, evaluates, or drains
+JavaScript enters one internal execution scope. The outermost scope refreshes
+QuickJS's stack top, resolves the operation timeout, installs diagnostic
+context, records nesting, translates interruption, and owns the final job
+checkpoint. Nested callbacks inherit that state. Promise settlement after an
+asynchronous Swift task starts a fresh actor-isolated entry.
+
+The QuickJS interrupt callback checks, in order, Swift task cancellation, a
+monotonic active-execution deadline, and the host's synchronous predicate. It
+does not suspend or enter JavaScript. Time awaiting a Swift binding, host
+Promise continuation, or module loader is outside the active execution scope,
+so these deadlines measure only work performed by QuickJS.
+
+`JavaScriptRuntime.perform` exposes actor isolation without creating another
+runtime abstraction. The synchronous overload provides one non-suspending actor
+turn and permits direct typed evaluation. Its decoder accepts values and
+Promises fulfilled by the immediate checkpoint, but reports `.wouldSuspend`
+instead of blocking for external progress. The async overload permits ordinary
+`try await`; it is explicitly reentrant at suspension points and is not a
+transaction.
 
 ## Evaluation data flows
 
@@ -85,11 +110,9 @@ an arbitrary deinitializer executor.
 ID zero is reserved for the global object. It is acquired only for the duration
 of each operation and therefore needs no persistent registry entry.
 
-Teardown order is strict:
-
-1. release every retained registry value;
-2. destroy the context;
-3. destroy the runtime.
+Teardown order is strict: cancel Swift producers and host waiters, release
+Swift-module export values and bindings, release every retained live value,
+destroy the context, and finally destroy the runtime.
 
 Temporary +1 values and stored registry values use one immutable RAII owner per
 QuickJS reference. Swift code may temporarily share that owner, but ownership of
@@ -225,21 +248,53 @@ snapshot values are read-only enumerable own properties. The binding registry
 retains roots and closures until removal, active-call completion, or runtime
 teardown; it performs no reflection.
 
+## ES module system
+
+Runtime-local ES module source is registered by canonical specifier. The
+default resolver normalizes relative path segments lexically against the
+referrer while preserving bare and scheme-prefixed specifiers. QuickJS retains
+native module identity and evaluation-once behavior, including cycles,
+re-exports, dynamic imports of available source, and top-level await. Namespace
+objects enter the same canonical live-value registry as other objects.
+
+The QuickJS normalizer and loader callbacks are synchronous and never suspend.
+They consume only actor-owned registered source. When static compilation finds
+a missing dependency, QuickJSKit releases the compile-only value, leaves the C
+boundary, asynchronously loads that dependency, registers ordinary Swift
+source storage, and retries compilation. Concurrent consumers of one canonical
+specifier share a loader task; cancelling one waiter does not cancel the task
+while other waiters remain. Unknown on-demand dynamic imports must be
+registered or preloaded because QuickJS's loader callback cannot await.
+
+Loader configuration becomes immutable at the first module compilation. This
+keeps normalization deterministic for the lifetime of QuickJS's module cache.
+Direct module evaluation allocates an internal unique specifier while retaining
+the supplied source URL for diagnostics, relative resolution, and
+`import.meta.url`.
+
+Swift-defined modules use QuickJS native C modules internally, but expose no C
+concepts. Their builder reuses the same binding drafts, type shapes, invocation
+thunks, Promise capabilities, validation, and ordering as global functions and
+object exports. Validation and value encoding complete before publication;
+failure removes every provisional binding and value. A published Swift module
+remains registered for the runtime lifetime because native module identity
+cannot be safely unloaded.
+
+## Resource observability
+
+Runtime configuration includes allocator and stack limits plus a default active
+execution timeout. `JavaScriptMemoryUsage` intentionally exposes only stable
+allocator bytes, used bytes, and the configured allocation limit; engine-
+specific counters remain internal. Garbage collection is an explicit request,
+not a promise that all host-retained values will disappear.
+
 ## Stable future boundaries
 
-### Modules
-
-Module normalization, resolution, source loading, and evaluation remain
-separate internal responsibilities. The synchronous QuickJS loader callback
-will consume preloaded source so a future async loader never blocks a Swift
-executor while waiting.
-
-### Interrupts and resource controls
-
-Memory and stack limits are current runtime configuration. Deadlines and task
-cancellation will use a narrow state token readable from QuickJS's synchronous
-interrupt callback. The callback will only decide whether to interrupt; error
-translation remains actor-isolated.
+TypeScript declarations and IDE workspaces will consume detached binding
+descriptions, including their global, object-export, and module locations.
+Future macros must emit the same binding drafts and may not create a parallel
+registration or module system. Workers, multiple contexts, source maps,
+persistent bytecode, import attributes, and blocking Atomics remain deferred.
 
 ## Error model
 
@@ -303,6 +358,11 @@ Sanitizers and warning-as-error builds are release gates, not optional cleanup.
 | Bindings | Detached descriptions paired with actor-owned thunks | Runtime, TypeScript, docs, IDE files, and macros can stay synchronized |
 | Promises | Native QuickJS promises and actor-owned checkpoints | Swift async interoperation preserves JavaScript semantics |
 | Exports | Explicit transactional builder | Surfaces are reviewable, typed, and macro-ready without reflection |
+| Execution | One nested top-level execution scope | Stack refresh, controls, checkpoints, and diagnostics remain consistent |
+| Scoped access | Sync and async isolated `perform` closures | Callers can batch work without a blocking facade or second runtime API |
+| Modules | Registered source plus compile-discover-load-retry | Async loading never suspends inside a QuickJS callback |
+| Swift modules | Native modules using canonical binding drafts | Globals, exports, modules, tooling, and future macros share one model |
+| Observability | Stable memory summary and explicit collection | Callers gain useful controls without exposing QuickJS-specific counters |
 | Portability | Portable core and tiny future adapters | Identical public API across supported platforms |
 | Distribution | Pinned upstream source in a C target | Reproducible builds and auditable upgrades |
 

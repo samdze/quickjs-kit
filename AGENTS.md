@@ -100,10 +100,11 @@ jobs, callbacks, loaders, and value registry.
   operation. Reentrancy must be explicit and tested before it is enabled.
 - Promise jobs are drained by the owning actor. Async Swift work may suspend,
   but promise settlement must re-enter that actor.
-- Future script interruption and deadlines will use QuickJS's interrupt handler
-  and Swift task cancellation. Promise waiters and Swift binding producers
-  already use actor-owned task cancellation. Interrupt callbacks may only
-  inspect atomically readable state; they must not call into JavaScript.
+- Script interruption and active-execution deadlines use QuickJS's interrupt
+  handler and Swift task cancellation. Suspended Swift work is intentionally
+  outside the execution deadline. Interrupt callbacks may only inspect the
+  current actor-owned execution scope; they must not suspend or call into
+  JavaScript.
 - Avoid locks. A narrow atomic flag is acceptable for an interrupt callback
   when actor access is impossible, provided the decision is documented.
 
@@ -124,6 +125,7 @@ QuickJSKit/
 │       ├── Bindings/
 │       ├── Conversion/
 │       ├── Errors/
+│       ├── Modules/
 │       ├── Runtime/
 │       └── Values/
 └── Tests/QuickJSKitTests/
@@ -357,12 +359,14 @@ happy path.
 - Job queue draining, cancellation, reentrancy policy, and lifecycle tests.
 - Exported Swift values and actors.
 
-### Phase 4 — modules and controls
+### Phase 4 — runtime execution, modules, and observability (completed)
 
-- ES modules, Swift modules, custom resolution and loading.
-- Interrupts, execution deadlines, cancellation, memory reporting, and richer
-  resource policies.
-- Capability reporting for platform differences.
+- Unified top-level execution scopes, synchronous and asynchronous `perform`,
+  and immediate typed evaluation.
+- Cancellation, execution deadlines, custom interruption, memory reporting,
+  and explicit garbage collection.
+- ES modules, Swift-defined modules, lexical resolution, asynchronous custom
+  loading, preload, top-level await, and canonical namespace identity.
 
 ### Phase 5 — TypeScript and IDE tooling
 

@@ -135,6 +135,89 @@ JavaScript execution failures are `JavaScriptError` values with copied names,
 messages, stacks, and source identities. Swift result-shape failures use the
 standard `EncodingError` and `DecodingError` families with coding paths.
 
+## Scoped execution and controls
+
+`perform` groups operations under one actor isolation context. Its synchronous
+form cannot suspend; its asynchronous form supports ordinary `try await` and is
+reentrant whenever the operation suspends:
+
+```swift
+let total = try await runtime.perform { runtime in
+    let first: Int = try runtime.evaluate("20")
+    let second: Int = try runtime.evaluate("22")
+    return first + second
+}
+
+let refreshed = try await runtime.perform { runtime in
+    let user: User = try await runtime.evaluate("loadUser()")
+    return user
+}
+```
+
+Synchronous typed evaluation drains immediately runnable jobs. It throws
+`JavaScriptError` with kind `.wouldSuspend` if external asynchronous progress
+is still required. Active JavaScript can be bounded per operation or by a
+runtime default:
+
+```swift
+let runtime = try JavaScriptRuntime(configuration: .init(
+    defaultExecutionTimeout: .milliseconds(250)
+))
+
+let result: Int = try await runtime.evaluate(
+    "expensiveCalculation()",
+    options: .init(timeout: .after(.seconds(1)))
+)
+```
+
+Task cancellation, deadlines, and a custom interrupt predicate stop active
+QuickJS execution without making the runtime unusable. `memoryUsage()` exposes
+a stable heap summary and `collectGarbage()` requests an explicit collection.
+
+## ES and Swift modules
+
+Runtime-local source supports native static imports, cycles, re-exports,
+dynamic imports of registered source, `import.meta.url`, and top-level await:
+
+```swift
+try await runtime.registerModule(
+    "export const answer = 42",
+    as: "app/math.js"
+)
+
+let module = try await runtime.importModule("app/math.js")
+let answer: Int = try await module.value(forExport: "answer")
+```
+
+An asynchronous loader can resolve a complete static dependency graph without
+blocking a Swift executor. Load work suspends outside QuickJS and concurrent
+requests for the same canonical specifier are coalesced:
+
+```swift
+try await runtime.setModuleLoader(.init { request in
+    let source = try await sourceStore.load(request.specifier)
+    return JavaScriptModuleSource(
+        source: source,
+        sourceURL: "memory:///\(request.specifier)"
+    )
+})
+```
+
+Swift-defined modules reuse the same typed binding and native Promise machinery
+as globals and explicit object exports:
+
+```swift
+try await runtime.defineModule("app/native") { module in
+    module.value("1.0", as: "version", documentation: "API version.")
+    module.function("sum") { (left: Int, right: Int) in
+        left + right
+    }
+}
+```
+
+Module registration and Swift module definition are transactional. Loader
+configuration becomes immutable once module compilation starts.
+
 ## Concurrency and ownership
 
 `JavaScriptRuntime` is an actor. Calls into one QuickJS heap are serialized,
@@ -152,13 +235,14 @@ runtime destruction.
 
 ## Current scope
 
-Phase 3 provides evaluation, live values, direct `Codable` conversion, typed
-Swift closure registration, native promise interoperability, explicit actor
-exports, binding lifecycle control, and unhandled-rejection observation.
+Phase 4 provides evaluation, live values, direct `Codable` conversion, typed
+Swift bindings and exports, native Promise interoperability, scoped runtime
+access, execution controls, ES and Swift modules, custom asynchronous loading,
+and memory observability.
 
-Modules, interrupts, timeouts, TypeScript rendering, IDE workspaces, macros,
-reflection-based exports, computed properties, and `AbortSignal` integration
-remain deliberate future phases. See [Architecture](Documentation/Architecture.md), the
+TypeScript rendering, IDE workspaces, macros, reflection-based exports,
+computed properties, workers, and `AbortSignal` integration remain deliberate
+future phases. See [Architecture](Documentation/Architecture.md), the
 [decision records](Documentation/Decisions), and [AGENTS.md](AGENTS.md) before
 contributing.
 

@@ -35,6 +35,11 @@ let package = Package(
             name: "QuickJSKit",
             dependencies: ["CQuickJS"]
         ),
+        .executableTarget(
+            name: "QuickJSKitBenchmarks",
+            dependencies: ["QuickJSKit"],
+            path: "Benchmarks/QuickJSKitBenchmarks"
+        ),
         .testTarget(
             name: "QuickJSKitTests",
             dependencies: ["QuickJSKit"]

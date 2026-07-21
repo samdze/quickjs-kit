@@ -1,5 +1,13 @@
 internal import CQuickJS
 
+internal func quickJSValueTag(_ value: JSValue) -> Int32 {
+#if arch(i386) || arch(arm) || arch(arm64_32) || arch(wasm32)
+    return Int32(bitPattern: UInt32(truncatingIfNeeded: value >> 32))
+#else
+    return Int32(truncatingIfNeeded: value.tag)
+#endif
+}
+
 /// Swift equivalents for QuickJS macros that Clang cannot import when JSValue
 /// uses its struct representation.
 internal func quickJSNull() -> JSValue {

@@ -17,7 +17,7 @@ support asynchronous workflows without pretending suspension is atomic.
 
 ## Decision
 
-`JavaScriptRuntime.perform` has two overloads. The synchronous overload accepts
+`JavaScriptRuntime.run` has two overloads. The synchronous overload accepts
 a non-suspending closure with an `isolated JavaScriptRuntime` parameter and runs
 as one actor turn. The asynchronous overload accepts an async isolated closure;
 it may use ordinary `try await` and is actor-reentrant at every suspension.

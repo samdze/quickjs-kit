@@ -28,4 +28,19 @@ public struct JavaScriptModule: Sendable, Hashable {
     ) async throws -> T {
         try await namespace.value(forProperty: name, as: type)
     }
+
+    /// Returns one exported JavaScript function as a reusable live handle.
+    ///
+    /// Resolve an export once and retain the returned handle when Swift calls
+    /// it repeatedly. The handle remains bound to this module's runtime.
+    public func function(forExport name: String) async throws -> JavaScriptFunction {
+        let value = try await value(forExport: name)
+        guard let function = value.functionValue else {
+            throw JavaScriptError(
+                kind: .conversion,
+                message: "Module export '\(name)' is not a function."
+            )
+        }
+        return function
+    }
 }

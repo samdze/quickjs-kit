@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the implemented Phase 5.1 architecture and the stable
+This document describes the implemented Phase 6.1 architecture and the stable
 boundaries reserved for later platform capabilities. Features identified as
 future work are design constraints, not current API promises.
 
@@ -12,6 +12,13 @@ future work are design constraints, not current API promises.
 Swift tasks
     │ await
     ▼
+JavaScriptRuntimeTemplate
+    ├── reusable bindings, exports, programs, modules, and Swift factories
+    ├── private compile-only program and module artifacts with source fallback
+    ├── explicit ordered startup actions
+    └── creates independent JavaScriptRuntime actors
+            │
+            ▼
 JavaScriptRuntime actor
     ├── scoped execution, evaluation, globals, and runtime-bound codecs
     ├── native Promise jobs, host waiters, cancellation, and rejection reports
@@ -26,6 +33,11 @@ JavaScriptRuntime actor
             ├── direct Encoder and Decoder containers
             ├── RAII owners for temporary and retained JSValue values
             └── CQuickJS
+
+JavaScriptRuntimeProvisioner
+    ├── bounded concurrent template creation
+    ├── FIFO demand and ready runtime capacity
+    └── one-way transfer without reset or reuse
 ```
 
 The actor, rather than a lock or dispatch queue, is the synchronization
@@ -310,8 +322,8 @@ Swift-provided globals, exported objects, Swift modules, known source modules,
 and reachable schemas into one immutable snapshot. The snapshot contains no
 runtime identifier, live value, closure, actor, QuickJS pointer, or invocation
 thunk. JavaScript-created globals and unknown future loader results are excluded.
-The same value model is the output boundary reserved for future runtime
-templates.
+`JavaScriptRuntimeTemplate.environmentDescription()` produces the same value
+model before any engine or per-runtime Swift root exists.
 
 Declaration rendering is a pure transformation over that snapshot. A focused
 resolver first validates scopes and named references and replaces relative
@@ -359,11 +371,10 @@ not a promise that all host-retained values will disappear.
 
 ## Stable future boundaries
 
-Future runtime templates will produce the same detached environment snapshot
-without constructing QuickJS. Future macros must emit the same schemas and
-binding drafts and may not create a parallel registration or module system.
-Workers, multiple contexts, declaration source maps,
-persistent bytecode, import attributes, and blocking Atomics remain deferred.
+Future macros must emit the same schemas, binding drafts, export definitions,
+and runtime templates and may not create a parallel registration or module
+system. Workers, multiple contexts, declaration source maps, persistent
+bytecode, import attributes, and blocking Atomics remain deferred.
 
 ## Error model
 
@@ -399,31 +410,61 @@ Android use their native Swift toolchains and remain equal API targets.
   than reflection.
 - TypeScript generation operates on detached metadata without entering or
   retaining QuickJS.
+- Runtime templates reuse validated definitions and compile-only module
+  and program artifacts without sharing live heap state.
+- Static template publication is batched into one engine entry.
+- Prepared programs avoid repeated parsing while retaining source diagnostics.
+- A one-shot provisioner moves runtime construction off latency-sensitive paths.
 
-Benchmarks will cover creation, evaluation, conversion, callbacks, promises,
-and module loading before performance-specific abstractions are accepted.
+The dependency-free benchmark executable reports p50, p95, p99, normalized
+throughput, and ready-runtime memory across direct and templated creation,
+binding counts, source and prepared programs, module preparation, host calls,
+concurrent creation, and cold or prewarmed acquisition. Correctness tests use
+structural counters instead of unstable wall-clock thresholds.
 
-## Reusable runtime configuration
+## Reusable runtime provisioning
 
-Binding definitions and module sources are reusable Swift state; bound
-functions, live values, Promise capabilities, namespaces, and registries belong
-to exactly one runtime. This separation reserves a future immutable
-`JavaScriptRuntimeTemplate` that can instantiate many independent runtime
-actors with identical configuration.
+`JavaScriptRuntimeTemplate` is an immutable, `Sendable` provisioning plan.
+Binding definitions, encoded-value producers, module source, loaders, tooling
+metadata, and Swift factories are reusable state. Bound functions, live
+values, Promise capabilities, namespaces, registries, contexts, and heaps
+belong to exactly one created runtime.
 
-Templates will remain declarative. Source is canonical, while QuickJS
-compile-only bytecode may become an internal disposable cache keyed by the
-exact engine build and compilation settings. Bytecode will not be a public
-serialization format, and evaluated heaps will not be cloned or shared.
-Templates may reuse `Sendable` Swift captures or invoke factories for
-per-runtime actors and objects. Runtime-bound `JavaScriptValue` exports are
-intentionally ineligible for reuse.
+Static definitions may capture shared `Sendable` actors or values. A typed
+per-runtime factory can instead produce one independent Swift root whose
+root-aware definitions span globals, object exports, and Swift modules. The
+root is absent from JavaScript signatures and metadata and is retained until
+its runtime is destroyed. Factories execute sequentially in declaration order;
+independent template creations may run concurrently.
+
+Template construction validates names, metadata, source syntax, and collisions
+without invoking factories. `makeRuntime()` configures a fresh engine, installs
+shared definitions in a batched engine entry, creates roots, and then performs
+explicit startup actions in declaration order. Startup programs await root
+Promises; startup module imports await top-level `await`. Any failure destroys
+the partial runtime. Template and unchanged-runtime environment descriptions
+are derived from the same normalized plan and remain byte-identical.
+
+Registered module and `JavaScriptProgram` source is canonical. Template
+construction parses it with compile-only evaluation and may retain private
+in-memory bytecode artifacts. Each destination reads artifacts into its own
+heap. Serialization failure leaves source uncached; an artifact read failure
+discards the incomplete runtime and retries once from source before factories
+or startup run. Artifacts are neither public nor persistent, loader-provided
+and transient modules are excluded, and no evaluated heap is cloned or shared.
+
+`JavaScriptRuntimeProvisioner` may retain a bounded supply of fully prepared
+runtimes and transfers each one permanently. It replenishes with new template
+instances under explicit concurrency limits. Leasing and reusable pooling stay
+application-owned because QuickJSKit cannot reset an unknowable heap after
+arbitrary JavaScript, host callbacks, pending jobs, or module evaluation.
 
 ## Test architecture
 
 `Tests/QuickJSKitTests/PublicAPI` imports only `QuickJSKit`. Its sentence-style
 tests are complete consumer examples for typed evaluation, globals, live
-values, codecs, Foundation types, errors, depth limits, and concurrency. README
+values, codecs, Foundation types, errors, depth limits, concurrency, and
+runtime templates. README
 and future DocC snippets must have an equivalent executable example there.
 
 `Tests/QuickJSKitTests/Internal` uses `@testable` only for registry identity,
@@ -450,6 +491,10 @@ Sanitizers and warning-as-error builds are release gates, not optional cleanup.
 | Observability | Stable memory summary and explicit collection | Callers gain useful controls without exposing QuickJS-specific counters |
 | Type metadata | Explicit schemas captured with canonical binding shapes | Runtime behavior stays valid without tooling metadata; strict generation remains honest |
 | Tooling | Immutable environment snapshots and pure deterministic rendering | Runtimes and future templates share one declaration model |
+| Provisioning | Immutable templates creating independent heaps | Reusable configuration does not weaken runtime isolation |
+| Module caching | Source-canonical private compile-only artifacts | High-volume creation avoids repeated parsing without exposing unsafe bytecode |
+| Program caching | Identity-based reusable programs with private artifacts | Known scripts avoid parsing while preserving source and independent heaps |
+| Hot provisioning | Bounded one-shot ready runtime supply | Acquisition is fast without reset contracts or shared mutable heaps |
 | Workspace writes | Detached files plus a content-hash ownership manifest | Regeneration is safe without watchers or runtime filesystem access |
 | Portability | Portable core and tiny future adapters | Identical public API across supported platforms |
 | Distribution | Pinned upstream source in a C target | Reproducible builds and auditable upgrades |

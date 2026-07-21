@@ -75,8 +75,17 @@ internal final class QuickJSEngine {
     internal var moduleCompilationStarted = false
     internal var nextTransientModuleIdentifier: UInt64 = 1
     internal var swiftModules: [UInt: RegisteredSwiftModule] = [:]
+    internal var compiledModuleValues: [String: ManagedQuickJSValue] = [:]
     internal var preloadedModuleSpecifiers: Set<String> = []
     internal var environmentModules: [String: EnvironmentModuleDescription] = [:]
+    internal var compiledProgramValues: [
+        ObjectIdentifier: ManagedQuickJSValue
+    ] = [:]
+    internal var sourceModuleCompilationCountForTesting = 0
+    internal var cachedModuleReadCountForTesting = 0
+    internal var preparedProgramCompilationCountForTesting = 0
+    internal var cachedProgramReadCountForTesting = 0
+    internal var templateCacheFallbackCountForTesting = 0
 
     internal init(configuration: JavaScriptRuntime.Configuration) throws {
         let memoryLimit = try Self.platformSize(
@@ -142,6 +151,8 @@ internal final class QuickJSEngine {
         JS_SetModuleLoaderFunc(runtime, nil, nil, nil)
         JS_SetRuntimeOpaque(runtime, nil)
         swiftModules.removeAll()
+        compiledProgramValues.removeAll()
+        compiledModuleValues.removeAll()
         removeAllBindingsForTeardown()
         references.removeAll()
         identifiersByObjectAddress.removeAll()
@@ -150,6 +161,21 @@ internal final class QuickJSEngine {
     }
 
     internal var retainedReferenceCount: Int { references.count }
+
+    internal func reserveProvisioningCapacity(
+        bindings: Int,
+        globals: Int,
+        modules: Int,
+        moduleSources sourceCount: Int,
+        programs: Int
+    ) {
+        swiftBindings.reserveCapacity(swiftBindings.count + bindings)
+        environmentGlobals.reserveCapacity(environmentGlobals.count + globals)
+        environmentModules.reserveCapacity(environmentModules.count + modules)
+        moduleSources.reserveCapacity(moduleSources.count + sourceCount)
+        compiledModuleValues.reserveCapacity(compiledModuleValues.count + sourceCount)
+        compiledProgramValues.reserveCapacity(compiledProgramValues.count + programs)
+    }
 
     internal func memoryUsage(allocationLimit: UInt64?) -> JavaScriptMemoryUsage {
         var usage = JSMemoryUsage()

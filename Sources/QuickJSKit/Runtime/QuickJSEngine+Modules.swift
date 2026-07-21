@@ -21,6 +21,8 @@ internal enum EngineModuleDiscovery {
     case missing(JavaScriptModuleRequest)
 }
 
+internal struct RuntimeTemplateArtifactReadError: Error, Sendable {}
+
 extension QuickJSEngine {
     internal func registerSwiftModule(
         specifier: String,
@@ -208,6 +210,28 @@ extension QuickJSEngine {
 
     internal func discoverModule(_ specifier: String) throws -> EngineModuleDiscovery {
         if nativeModuleSpecifiers.contains(specifier) { return .ready }
+        if let compiled = compiledModuleValues[specifier] {
+            moduleCompilationStarted = true
+            missingModuleRequest = nil
+            let status = JS_ResolveModule(context, compiled.raw)
+            if status < 0 {
+                if let missing = missingModuleRequest {
+                    missingModuleRequest = nil
+                    clearPendingException()
+                    return .missing(missing)
+                }
+                let error = extractException(sourceURL: moduleSources[specifier]?.sourceURL)
+                if error.kind == .syntax { throw error }
+                throw JavaScriptError(
+                    kind: .module,
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack,
+                    sourceURL: error.sourceURL
+                )
+            }
+            return .ready
+        }
         guard let source = moduleSources[specifier] else {
             return .missing(JavaScriptModuleRequest(specifier: specifier, referrer: nil))
         }
@@ -284,6 +308,9 @@ extension QuickJSEngine {
 
     internal func compileModuleForLoader(_ specifier: String) -> OpaquePointer? {
         moduleCompilationStarted = true
+        if let compiled = compiledModuleValues[specifier] {
+            return quickJSModulePointer(compiled.raw)
+        }
         guard let source = moduleSources[specifier] else {
             missingModuleRequest = normalizedModuleRequests[specifier] ?? JavaScriptModuleRequest(
                 specifier: specifier,
@@ -312,7 +339,8 @@ extension QuickJSEngine {
         _ source: EngineModuleSource,
         specifier: String
     ) -> JSValue {
-        source.source.withCString { sourcePointer in
+        sourceModuleCompilationCountForTesting += 1
+        return source.source.withCString { sourcePointer in
             specifier.withCString { specifierPointer in
                 JS_Eval(
                     context,
@@ -323,6 +351,78 @@ extension QuickJSEngine {
                 )
             }
         }
+    }
+
+    internal func compileModuleArtifact(
+        source: String,
+        specifier: String,
+        sourceURL: String
+    ) throws -> [UInt8]? {
+        let engineSource = EngineModuleSource(source: source, sourceURL: sourceURL)
+        let raw = compileModuleSource(engineSource, specifier: specifier)
+        if JS_IsException(raw) != 0 {
+            let error = extractException(sourceURL: sourceURL)
+            if error.kind == .syntax { throw error }
+            throw JavaScriptError(
+                kind: .module,
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+                sourceURL: error.sourceURL
+            )
+        }
+        let compiled = ManagedQuickJSValue(raw, in: context)
+        guard quickJSModulePointer(compiled.raw) != nil else {
+            throw JavaScriptError(
+                kind: .internalFailure,
+                message: "Compile-only module evaluation did not produce a module."
+            )
+        }
+
+        var byteCount = 0
+        // JS_WriteObject returns a context-allocated buffer. Copy its bytes
+        // into detached Swift storage, then balance that allocation exactly once.
+        guard let bytes = JS_WriteObject(
+            context,
+            &byteCount,
+            compiled.raw,
+            Int32(JS_WRITE_OBJ_BYTECODE)
+        ) else {
+            clearPendingException()
+            return nil
+        }
+        defer { js_free(context, bytes) }
+        return Array(UnsafeBufferPointer(start: bytes, count: byteCount))
+    }
+
+    internal func installCompiledModuleArtifact(
+        _ bytes: [UInt8],
+        specifier: String,
+        sourceURL: String
+    ) throws {
+        guard !bytes.isEmpty else { throw RuntimeTemplateArtifactReadError() }
+        moduleCompilationStarted = true
+        let raw = bytes.withUnsafeBufferPointer { buffer in
+            JS_ReadObject(
+                context,
+                buffer.baseAddress,
+                buffer.count,
+                Int32(JS_READ_OBJ_BYTECODE)
+            )
+        }
+        guard JS_IsException(raw) == 0 else {
+            clearPendingException()
+            throw RuntimeTemplateArtifactReadError()
+        }
+        // JS_ReadObject returns a +1 value. Keep that owner alive until module
+        // resolution or runtime teardown releases the destination context.
+        let compiled = ManagedQuickJSValue(raw, in: context)
+        guard let module = quickJSModulePointer(compiled.raw) else {
+            throw RuntimeTemplateArtifactReadError()
+        }
+        setImportMetaURL(sourceURL, on: module)
+        compiledModuleValues[specifier] = compiled
+        cachedModuleReadCountForTesting += 1
     }
 
     private func setImportMetaURL(_ sourceURL: String, on module: OpaquePointer) {

@@ -379,16 +379,31 @@ happy path.
   errors, and deprecation, with an independent documentation-completeness gate.
 - Reproducible managed editor workspaces with safe explicit regeneration.
 
-### Phase 6 — templates, macros, and ecosystem maturity
+### Phase 6 — runtime templates and provisioning (completed)
 
-- Declarative runtime templates for efficient creation of many identically
-  configured independent runtimes, including per-instance Swift export
-  factories.
-- Optional macro target that emits canonical binding descriptions.
+- Immutable declarative templates that create independently isolated runtimes.
+- Shared Sendable definitions and typed per-runtime Swift root factories.
+- Environment and TypeScript snapshots without constructing QuickJS.
+- Private source-canonical compile-only module artifacts with safe fallback.
+- A dependency-free runtime-provisioning benchmark executable.
+- Reusable precompiled global programs with canonical source fallback.
+- Explicit linked and evaluated startup actions after complete publication.
+- Batched template installation and one-shot prewarmed runtime provisioning.
+- Percentile benchmarks for startup, calls, modules, and ready acquisition.
+
+### Phase 7 — macros
+
+- Optional macro target that emits canonical schemas and binding definitions.
 - `@JavaScriptExport`-style actor and type exports.
-- Internal version-bound compilation caches for high-volume runtime creation.
-- Benchmarks, compatibility policy, security guide, DocC catalog, examples,
-  release automation, and broad platform CI.
+- Macro-generated runtime-template configuration using the handwritten path.
+- Declaration source locations and source maps when reliable compiler metadata
+  is available.
+
+### Phase 8 — ecosystem maturity
+
+- Benchmarks for evaluation, conversion, callbacks, promises, and modules.
+- Compatibility policy, security guide, DocC catalog, and complete examples.
+- Release automation and broad platform CI.
 
 ## Design principles checklist
 

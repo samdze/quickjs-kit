@@ -1,8 +1,9 @@
 /// A transactional description of Swift members exported to JavaScript.
 ///
 /// Configure exports inside ``JavaScriptRuntime/export(_:as:documentation:_:)``
-/// or ``JavaScriptRuntime/defineModule(_:documentation:_:)``. The destination
-/// runtime validates and encodes every member before publishing it.
+/// and ``JavaScriptRuntime/defineModule(_:documentation:_:)``, or reuse the
+/// same definitions in ``JavaScriptRuntimeTemplate``. The destination controls
+/// property attributes and encodes every snapshot value into its own heap.
 public struct JavaScriptExportBuilder {
     internal var members: [JavaScriptExportMemberDefinition] = []
 
@@ -168,7 +169,10 @@ public struct JavaScriptExportBuilder {
         }
     }
 
-    /// Adds a read-only enumerable snapshot value.
+    /// Adds a snapshot value.
+    ///
+    /// Object and module destinations publish it as read-only and enumerable.
+    /// A template global uses ordinary writable global-property semantics.
     public mutating func value<Value: Encodable & Sendable>(
         _ value: Value,
         as name: String,

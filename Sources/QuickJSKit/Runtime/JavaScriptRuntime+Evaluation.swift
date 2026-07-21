@@ -1,4 +1,14 @@
 extension JavaScriptRuntime {
+    /// Compiles a reusable program into this runtime without executing it.
+    ///
+    /// Repeated preparation of the same program value is idempotent. Compiled
+    /// state belongs exclusively to this runtime and is released at teardown.
+    public func prepare(_ program: JavaScriptProgram) throws {
+        try engine.withEngineEntry(drainJobs: false) {
+            try engine.prepareProgram(program)
+        }
+    }
+
     /// Evaluates a JavaScript script and returns its general value.
     public func evaluate(
         _ source: String,
@@ -9,6 +19,26 @@ extension JavaScriptRuntime {
             let raw = try engine.evaluateRaw(source, sourceURL: sourceURL)
             engine.markPromiseObserved(raw)
             return try makeValue(engine.decodeUntyped(raw, sourceURL: sourceURL))
+        }
+    }
+
+    /// Evaluates a prepared program and returns its general value.
+    ///
+    /// The first call compiles the program when it was not installed by a
+    /// runtime template. Later calls reuse the retained compiled function.
+    public func evaluate(
+        _ program: JavaScriptProgram,
+        options: JavaScriptExecutionOptions = .init()
+    ) throws -> JavaScriptValue {
+        try engine.withEngineEntry(
+            options: options,
+            sourceURL: program.sourceURL
+        ) {
+            let raw = try engine.evaluatePreparedProgram(program)
+            engine.markPromiseObserved(raw)
+            return try makeValue(
+                engine.decodeUntyped(raw, sourceURL: program.sourceURL)
+            )
         }
     }
 
@@ -34,6 +64,25 @@ extension JavaScriptRuntime {
         }
     }
 
+    /// Evaluates a prepared program and immediately decodes its result.
+    ///
+    /// A Promise that remains pending after the immediate job checkpoint
+    /// throws ``JavaScriptError/Kind/wouldSuspend``.
+    public func evaluate<T: Decodable & Sendable>(
+        _ program: JavaScriptProgram,
+        as type: T.Type = T.self,
+        options: JavaScriptExecutionOptions = .init()
+    ) throws -> T {
+        try decodeRootImmediately(
+            type,
+            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
+            sourceURL: program.sourceURL,
+            options: options
+        ) {
+            try engine.evaluatePreparedProgram(program)
+        }
+    }
+
     /// Evaluates JavaScript and directly decodes its result as a Swift type.
     ///
     /// The result type may be inferred from context or selected with `as:`.
@@ -50,6 +99,25 @@ extension JavaScriptRuntime {
             options: options
         ) {
             try engine.evaluateRaw(source, sourceURL: sourceURL)
+        }
+    }
+
+    /// Evaluates a prepared program and asynchronously decodes its result.
+    ///
+    /// Native Promise results are awaited through the runtime's ordinary root
+    /// result path, including cancellation and rejection translation.
+    public func evaluate<T: Decodable & Sendable>(
+        _ program: JavaScriptProgram,
+        as type: T.Type = T.self,
+        options: JavaScriptExecutionOptions = .init()
+    ) async throws -> T {
+        try await decodeRoot(
+            type,
+            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
+            sourceURL: program.sourceURL,
+            options: options
+        ) {
+            try engine.evaluatePreparedProgram(program)
         }
     }
 

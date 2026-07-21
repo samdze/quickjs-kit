@@ -225,6 +225,130 @@ try await runtime.defineModule("app/native") { module in
 Module registration and Swift module definition are transactional. Loader
 configuration becomes immutable once module compilation starts.
 
+## Reusable runtime templates
+
+`JavaScriptRuntimeTemplate` describes an environment once and creates any
+number of independently isolated runtimes. Each runtime owns a distinct
+QuickJS heap, context, module registry, Promise queue, limits, and global
+object. The template never shares JavaScript objects between them.
+
+```swift
+let template = try JavaScriptRuntimeTemplate(
+    configuration: .init(memoryLimit: 32 * 1_024 * 1_024)
+) { template in
+    template.globals { globals in
+        globals.function("sum") { (left: Int, right: Int) in
+            left + right
+        }
+        globals.value("1.0", as: "hostVersion")
+    }
+
+    template.defineModule("host:math") { module in
+        module.function("double") { (value: Int) in value * 2 }
+    }
+
+    template.registerModule(
+        "export const answer = 42;",
+        as: "app:answer",
+        typeScriptDeclarations: .init("export const answer: number;")
+    )
+}
+
+async let first = template.makeRuntime()
+async let second = template.makeRuntime()
+let (firstRuntime, secondRuntime) = try await (first, second)
+```
+
+Shared `Sendable` actors and closures can be captured directly. When every
+runtime needs distinct Swift state, declare one asynchronous factory and use
+its root across globals, objects, and Swift modules:
+
+```swift
+let template = try JavaScriptRuntimeTemplate { template in
+    template.instance(factory: { Storage() }) { instance in
+        instance.export(as: "storage") { export in
+            export.function("read") { storage, key in
+                try await storage.read(key)
+            }
+            export.value(as: "version") { _ in "1.0" }
+        }
+
+        instance.defineModule("host:storage") { module in
+            module.function("remove") { storage, key in
+                try await storage.remove(key)
+            }
+        }
+    }
+}
+```
+
+The factory root is a Swift-only parameter and does not appear in JavaScript
+arity, generated TypeScript, or TSDoc. Factories run sequentially in
+declaration order for one creation; separate `makeRuntime()` calls can run
+concurrently through ordinary Swift structured concurrency.
+
+Registered source modules are parsed once when the template is created. An
+internal compile-only bytecode artifact accelerates installation into each new
+heap. Source remains canonical: artifacts are process-local, are never exposed
+or persisted, and an unreadable artifact causes a fresh runtime to retry from
+source before a Swift factory runs. Module bodies still execute only on import.
+
+Known global scripts can use the same source-canonical optimization through a
+reusable program. Startup remains explicit, so moving work into provisioning is
+always visible at the template declaration:
+
+```swift
+let bootstrap = JavaScriptProgram(
+    "initializeHost().then(value => { globalThis.ready = value })",
+    sourceURL: "Scripts/bootstrap.js"
+)
+
+let template = try JavaScriptRuntimeTemplate { template in
+    template.globals { globals in
+        globals.function("initializeHost") { () async -> Bool in true }
+    }
+    template.registerModule("export const shared = true", as: "app:shared")
+    template.registerModule(
+        "import { shared } from 'app:shared'; export { shared }",
+        as: "app:main"
+    )
+    template.runAtStartup(bootstrap)
+    template.preloadModule("app:shared")
+    template.importModuleAtStartup("app:main")
+}
+```
+
+`prepare` compiles without executing. Startup programs await native Promise
+results, preloaded modules link without running their bodies, and startup
+imports complete top-level `await` before `makeRuntime()` returns.
+
+Templates also produce the exact TypeScript environment without constructing
+QuickJS:
+
+```swift
+let environment = try template.environmentDescription()
+let workspace = try environment.typeScriptWorkspace()
+try workspace.write(to: workspaceURL)
+```
+
+For latency-sensitive services, `JavaScriptRuntimeProvisioner` maintains a
+bounded supply of fully prepared runtimes:
+
+```swift
+let provisioner = try JavaScriptRuntimeProvisioner(
+    template: template,
+    warmCapacity: 8,
+    maximumConcurrentCreations: 4
+)
+
+try await provisioner.warmUp()
+let runtime = try await provisioner.makeRuntime()
+```
+
+Each runtime is transferred permanently and replenished in the background.
+QuickJSKit does not reset, return, or reuse an arbitrarily mutated heap; a
+general-purpose leasing pool remains application-owned.
+
 ## TypeScript declarations and IDE workspaces
 
 Swift models opt into structural declarations explicitly. The schema is an
@@ -384,15 +508,17 @@ runtime destruction.
 
 ## Current scope
 
-Phase 5 provides evaluation, live values, direct `Codable` conversion, typed
+Phase 6 provides evaluation, live values, direct `Codable` conversion, typed
 Swift bindings and exports, native Promise interoperability, scoped runtime
 access, execution controls, ES and Swift modules, custom asynchronous loading,
 memory observability, explicit TypeScript schemas, detached environment
 snapshots, deterministic declarations, and managed IDE workspaces.
 
-Runtime templates, macros, reflection-based exports, declaration source maps,
-computed properties, workers, and `AbortSignal` integration remain deliberate
-future phases. See [Architecture](Documentation/Architecture.md), the
+It also provides declarative runtime templates, per-runtime Swift factories,
+and private source-canonical module compilation caching. Macros,
+reflection-based exports, declaration source maps, computed properties,
+workers, and `AbortSignal` integration remain deliberate future phases. See
+[Architecture](Documentation/Architecture.md), the
 [decision records](Documentation/Decisions), and [AGENTS.md](AGENTS.md) before
 contributing.
 
@@ -409,6 +535,7 @@ ownership and registry invariants.
 swift build
 swift test
 swift test -Xswiftc -warnings-as-errors -Xcc -Werror
+swift run QuickJSKitBenchmarks --iterations 100
 ```
 
 Treat warnings and sanitizer findings as defects.

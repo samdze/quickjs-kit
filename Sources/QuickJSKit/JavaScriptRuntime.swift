@@ -37,6 +37,7 @@ public actor JavaScriptRuntime {
     internal var moduleLoader: JavaScriptModuleLoader?
     internal var moduleLoadOperations: [String: ModuleLoadOperation] = [:]
     internal var nextModuleLoadWaiterIdentifier: UInt64 = 1
+    internal var templateRoots: [any AnyObject & Sendable] = []
 
     /// Creates an isolated JavaScript runtime.
     public init(configuration: Configuration = Configuration()) throws {
@@ -144,6 +145,26 @@ public actor JavaScriptRuntime {
 
     internal var checkpointCountForTesting: Int {
         engine.checkpointCountForTesting
+    }
+
+    internal var sourceModuleCompilationCountForTesting: Int {
+        engine.sourceModuleCompilationCountForTesting
+    }
+
+    internal var cachedModuleReadCountForTesting: Int {
+        engine.cachedModuleReadCountForTesting
+    }
+
+    internal var preparedProgramCompilationCountForTesting: Int {
+        engine.preparedProgramCompilationCountForTesting
+    }
+
+    internal var cachedProgramReadCountForTesting: Int {
+        engine.cachedProgramReadCountForTesting
+    }
+
+    internal var templateCacheFallbackCountForTesting: Int {
+        engine.templateCacheFallbackCountForTesting
     }
 
     internal var bindingDescriptionsForTesting: [BindingDescription] {

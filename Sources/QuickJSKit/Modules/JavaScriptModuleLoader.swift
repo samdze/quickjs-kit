@@ -21,10 +21,24 @@ public struct JavaScriptModuleSource: Sendable, Hashable {
     /// The diagnostic and `import.meta.url` location for the source.
     public let sourceURL: String
 
+    /// Optional TypeScript declarations describing this module's exports.
+    public let typeScriptDeclarations: TypeScriptModuleDeclarations?
+
     /// Creates loaded module source.
-    public init(source: String, sourceURL: String) {
+    ///
+    /// - Parameters:
+    ///   - source: ES module source code.
+    ///   - sourceURL: The diagnostic and `import.meta.url` identity.
+    ///   - typeScriptDeclarations: Optional declarations included in future
+    ///     environment snapshots after this source is loaded.
+    public init(
+        source: String,
+        sourceURL: String,
+        typeScriptDeclarations: TypeScriptModuleDeclarations? = nil
+    ) {
         self.source = source
         self.sourceURL = sourceURL
+        self.typeScriptDeclarations = typeScriptDeclarations
     }
 }
 

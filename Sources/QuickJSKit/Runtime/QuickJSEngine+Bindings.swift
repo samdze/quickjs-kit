@@ -110,22 +110,27 @@ extension QuickJSEngine {
         swiftBindings[identifier] = record
 
         do {
-            let function = try makeBoundFunction(
+            let rawFunction = try makeBoundFunction(
                 bindingIdentifier: identifier,
                 name: name,
                 length: function.description.parameters.count
             )
             record.exposedValue = ManagedQuickJSValue(
-                JS_DupValue(context, function.raw),
+                JS_DupValue(context, rawFunction.raw),
                 in: context
             )
             let global = ManagedQuickJSValue(JS_GetGlobalObject(context), in: context)
             let status = name.withCString {
-                JS_SetPropertyStr(context, global.raw, $0, JS_DupValue(context, function.raw))
+                JS_SetPropertyStr(context, global.raw, $0, JS_DupValue(context, rawFunction.raw))
             }
             guard status >= 0 else { throw extractException() }
+            let decoded = try decodeUntyped(rawFunction)
             currentGlobalBindings[name] = identifier
-            return (identifier, try decodeUntyped(function))
+            environmentGlobals[name] = RegisteredEnvironmentGlobal(
+                bindingIdentifier: identifier,
+                description: .function(EnvironmentFunctionDescription(function.description))
+            )
+            return (identifier, decoded)
         } catch {
             swiftBindings.removeValue(forKey: identifier)
             throw error
@@ -162,6 +167,9 @@ extension QuickJSEngine {
                 guard status >= 0 else { throw extractException() }
             }
             currentGlobalBindings.removeValue(forKey: binding.name)
+        }
+        if environmentGlobals[binding.name]?.bindingIdentifier == identifier {
+            environmentGlobals.removeValue(forKey: binding.name)
         }
 
         if cancellingInFlight {
@@ -231,7 +239,7 @@ extension QuickJSEngine {
                         value: rawFunction.raw,
                         flags: 0
                     )
-                case let .value(encode):
+                case let .value(_, encode):
                     let value = try encode(self)
                     try defineProperty(
                         member.name,
@@ -239,7 +247,7 @@ extension QuickJSEngine {
                         value: value.raw,
                         flags: Int32(JS_PROP_ENUMERABLE)
                     )
-                case let .liveValue(value):
+                case let .liveValue(_, value):
                     let materialized = try materialize(value)
                     try defineProperty(
                         member.name,
@@ -259,8 +267,16 @@ extension QuickJSEngine {
                 JS_SetPropertyStr(context, global.raw, $0, JS_DupValue(context, object.raw))
             }
             guard status >= 0 else { throw extractException() }
+            let decoded = try decodeUntyped(object)
             currentGlobalBindings[name] = exportIdentifier
-            return (exportIdentifier, try decodeUntyped(object))
+            environmentGlobals[name] = RegisteredEnvironmentGlobal(
+                bindingIdentifier: exportIdentifier,
+                description: .object(
+                    name: name,
+                    members: members.map(\.environmentDescription)
+                )
+            )
+            return (exportIdentifier, decoded)
         } catch {
             for identifier in createdChildren { swiftBindings.removeValue(forKey: identifier) }
             swiftBindings.removeValue(forKey: exportIdentifier)
@@ -322,6 +338,7 @@ extension QuickJSEngine {
         hostPromiseWaiters.removeAll()
         swiftBindings.removeAll()
         currentGlobalBindings.removeAll()
+        environmentGlobals.removeAll()
         unhandledRejections.removeAll()
         observedPromiseAddresses.removeAll()
     }

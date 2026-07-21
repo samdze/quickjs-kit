@@ -49,6 +49,7 @@ internal final class QuickJSEngine {
     internal var nextOperationIdentifier: UInt64 = 1
     internal var swiftBindings: [UInt64: RegisteredBinding] = [:]
     internal var currentGlobalBindings: [String: UInt64] = [:]
+    internal var environmentGlobals: [String: RegisteredEnvironmentGlobal] = [:]
     internal var pendingSwiftPromises: [UInt64: PendingSwiftPromise] = [:]
     internal var nextHostWaiterIdentifier: UInt64 = 1
     internal var hostPromiseWaiters: [UInt64: HostPromiseWaiter] = [:]
@@ -75,6 +76,7 @@ internal final class QuickJSEngine {
     internal var nextTransientModuleIdentifier: UInt64 = 1
     internal var swiftModules: [UInt: RegisteredSwiftModule] = [:]
     internal var preloadedModuleSpecifiers: Set<String> = []
+    internal var environmentModules: [String: EnvironmentModuleDescription] = [:]
 
     internal init(configuration: JavaScriptRuntime.Configuration) throws {
         let memoryLimit = try Self.platformSize(

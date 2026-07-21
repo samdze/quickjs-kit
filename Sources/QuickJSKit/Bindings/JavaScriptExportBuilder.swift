@@ -179,12 +179,15 @@ public struct JavaScriptExportBuilder {
                 name: name,
                 documentation: documentation,
                 validationMessage: exportMemberValidationMessage(name),
-                storage: .value { engine in
-                    try engine.encode(
-                        value,
-                        maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
-                    )
-                }
+                storage: .value(
+                    type: bindingTypeShape(for: Value.self),
+                    encode: { engine in
+                        try engine.encode(
+                            value,
+                            maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
+                        )
+                    }
+                )
             )
         )
     }
@@ -200,7 +203,7 @@ public struct JavaScriptExportBuilder {
                 name: name,
                 documentation: documentation,
                 validationMessage: exportMemberValidationMessage(name),
-                storage: .liveValue(value)
+                storage: .liveValue(type: bindingTypeShape(for: value), value: value)
             )
         )
     }
@@ -311,8 +314,11 @@ public struct JavaScriptExportBuilder {
 internal struct JavaScriptExportMemberDefinition: Sendable {
     internal enum Storage: Sendable {
         case function(BindingDefinition)
-        case value(@Sendable (QuickJSEngine) throws -> ManagedQuickJSValue)
-        case liveValue(JavaScriptValue)
+        case value(
+            type: BindingTypeShape,
+            encode: @Sendable (QuickJSEngine) throws -> ManagedQuickJSValue
+        )
+        case liveValue(type: BindingTypeShape, value: JavaScriptValue)
     }
 
     internal let name: String
@@ -366,7 +372,7 @@ extension JavaScriptRuntime {
         in members: [JavaScriptExportMemberDefinition]
     ) throws {
         for member in members {
-            if case let .liveValue(value) = member.storage {
+            if case let .liveValue(_, value) = member.storage {
                 try validate(value)
             }
         }

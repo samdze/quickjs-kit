@@ -2,8 +2,12 @@ internal import Foundation
 
 internal enum BindingTypeShape: Sendable, Hashable {
     case void
+    case unknown
+    case null
+    case undefined
     case boolean
     case string
+    case bigInt
     case floatingPoint(String)
     case integer(name: String, signed: Bool, bits: Int)
     indirect case optional(BindingTypeShape)
@@ -12,7 +16,7 @@ internal enum BindingTypeShape: Sendable, Hashable {
     case data
     case date
     case url
-    case codable(String)
+    case codable(swiftName: String, schema: TypeScriptSchema?)
 }
 
 internal struct BindingParameterDescription: Sendable, Hashable {
@@ -166,6 +170,10 @@ extension URL: BindingTypeShapeProviding {
     internal static let bindingTypeShape: BindingTypeShape = .url
 }
 
+extension JavaScriptBigInt: BindingTypeShapeProviding {
+    internal static let bindingTypeShape: BindingTypeShape = .bigInt
+}
+
 internal func bindingTypeShape<T>(for type: T.Type) -> BindingTypeShape {
     bindingTypeShape(forAny: type)
 }
@@ -184,7 +192,8 @@ private func bindingTypeShape(forAny type: Any.Type) -> BindingTypeShape {
        ObjectIdentifier(dictionary.keyBindingType) == ObjectIdentifier(String.self) {
         return .dictionary(bindingTypeShape(forAny: dictionary.valueBindingType))
     }
-    return .codable(String(reflecting: type))
+    let schema = (type as? any TypeScriptSchemaProviding.Type)?.typeScriptSchema
+    return .codable(swiftName: String(reflecting: type), schema: schema)
 }
 
 internal func bindingParameterShapes<each Parameter>(
@@ -195,4 +204,23 @@ internal func bindingParameterShapes<each Parameter>(
         shapes.append(bindingTypeShape(for: type))
     }
     return shapes
+}
+
+internal func bindingTypeShape(for value: JavaScriptValue) -> BindingTypeShape {
+    switch value.storage {
+    case .undefined:
+        return .undefined
+    case .null:
+        return .null
+    case .boolean:
+        return .boolean
+    case .number:
+        return .floatingPoint("Double")
+    case .string:
+        return .string
+    case .bigInt:
+        return .bigInt
+    case .reference:
+        return .unknown
+    }
 }

@@ -61,6 +61,19 @@ extension JavaScriptRuntime {
                 maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
             )
             try engine.setProperty(named: name, on: reference.identifier, to: raw)
+            if reference.identifier == 0 {
+                engine.environmentGlobals[name] = RegisteredEnvironmentGlobal(
+                    bindingIdentifier: nil,
+                    description: .value(
+                        EnvironmentValueDescription(
+                            name: name,
+                            type: bindingTypeShape(for: T.self),
+                            documentation: nil,
+                            isReadOnly: false
+                        )
+                    )
+                )
+            }
         }
     }
 
@@ -74,6 +87,19 @@ extension JavaScriptRuntime {
             try validate(value)
             let raw = try engine.materialize(value)
             try engine.setProperty(named: name, on: reference.identifier, to: raw)
+            if reference.identifier == 0 {
+                engine.environmentGlobals[name] = RegisteredEnvironmentGlobal(
+                    bindingIdentifier: nil,
+                    description: .value(
+                        EnvironmentValueDescription(
+                            name: name,
+                            type: bindingTypeShape(for: value),
+                            documentation: nil,
+                            isReadOnly: false
+                        )
+                    )
+                )
+            }
         }
     }
 
@@ -90,7 +116,11 @@ extension JavaScriptRuntime {
     ) throws -> Bool {
         try engine.withEngineEntry() {
             try validate(reference)
-            return try engine.deleteProperty(named: name, on: reference.identifier)
+            let deleted = try engine.deleteProperty(named: name, on: reference.identifier)
+            if deleted, reference.identifier == 0 {
+                engine.environmentGlobals.removeValue(forKey: name)
+            }
+            return deleted
         }
     }
 

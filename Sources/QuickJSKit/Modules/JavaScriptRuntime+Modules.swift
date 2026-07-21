@@ -4,16 +4,28 @@ internal struct ModuleLoadOperation: Sendable {
 }
 
 extension JavaScriptRuntime {
-    /// Registers runtime-local ES module source.
+    /// Registers runtime-local ES module source and optional tooling metadata.
+    ///
+    /// Companion declarations describe the body inside the ambient module
+    /// block generated for the canonical specifier. QuickJSKit never infers
+    /// declarations from JavaScript source.
+    ///
+    /// - Parameters:
+    ///   - source: ES module source code.
+    ///   - specifier: The canonical runtime-local module specifier.
+    ///   - sourceURL: An optional diagnostic and `import.meta.url` identity.
+    ///   - typeScriptDeclarations: Optional declarations for tooling snapshots.
     public func registerModule(
         _ source: String,
         as specifier: String,
-        sourceURL: String? = nil
+        sourceURL: String? = nil,
+        typeScriptDeclarations: TypeScriptModuleDeclarations? = nil
     ) throws {
         try engine.registerModuleSource(
             source,
             specifier: specifier,
-            sourceURL: sourceURL ?? specifier
+            sourceURL: sourceURL ?? specifier,
+            typeScriptDeclarations: typeScriptDeclarations
         )
     }
 
@@ -68,7 +80,12 @@ extension JavaScriptRuntime {
         options: JavaScriptExecutionOptions = .init()
     ) async throws -> JavaScriptModule {
         let specifier = engine.allocateTransientModuleSpecifier()
-        try engine.registerModuleSource(source, specifier: specifier, sourceURL: sourceURL)
+        try engine.registerModuleSource(
+            source,
+            specifier: specifier,
+            sourceURL: sourceURL,
+            isEnvironmentModule: false
+        )
         try await prepareModule(specifier)
         return try await importResolvedModule(specifier, options: options)
     }
@@ -81,7 +98,12 @@ extension JavaScriptRuntime {
         options: JavaScriptExecutionOptions = .init()
     ) async throws -> T {
         let specifier = engine.allocateTransientModuleSpecifier()
-        try engine.registerModuleSource(source, specifier: specifier, sourceURL: sourceURL)
+        try engine.registerModuleSource(
+            source,
+            specifier: specifier,
+            sourceURL: sourceURL,
+            isEnvironmentModule: false
+        )
         try await prepareModule(specifier)
         return try await decodeRoot(
             type,

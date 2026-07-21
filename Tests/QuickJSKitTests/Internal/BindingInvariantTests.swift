@@ -41,9 +41,10 @@ struct BindingInvariantTests {
         }
 
         let description = try #require(await runtime.bindingDescriptionsForTesting.first)
-        guard case let .array(.optional(.codable(parameterName))) =
+        guard case let .array(.optional(.codable(swiftName: parameterName, schema: _))) =
                 description.parameters.first?.type,
-              case let .dictionary(.codable(resultName)) = description.result else {
+              case let .dictionary(.codable(swiftName: resultName, schema: _)) =
+                description.result else {
             Issue.record("The description did not retain recursive collection shapes.")
             return
         }

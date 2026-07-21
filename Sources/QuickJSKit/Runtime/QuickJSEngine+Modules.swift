@@ -49,9 +49,9 @@ extension QuickJSEngine {
                     throw JavaScriptError(kind: .conversion, message: message)
                 }
                 switch member.storage {
-                case let .value(encode):
+                case let .value(_, encode):
                     exports[member.name] = try encode(self)
-                case let .liveValue(value):
+                case let .liveValue(_, value):
                     exports[member.name] = try materialize(value)
                 case let .function(definition):
                     let identifier = try allocateBindingIdentifier()
@@ -98,6 +98,10 @@ extension QuickJSEngine {
                 bindingIdentifiers: bindingIdentifiers
             )
             nativeModuleSpecifiers.insert(specifier)
+            environmentModules[specifier] = .swift(
+                specifier: specifier,
+                members: members.map(\.environmentDescription)
+            )
         } catch {
             for identifier in bindingIdentifiers {
                 swiftBindings.removeValue(forKey: identifier)
@@ -138,7 +142,9 @@ extension QuickJSEngine {
     internal func registerModuleSource(
         _ source: String,
         specifier: String,
-        sourceURL: String
+        sourceURL: String,
+        typeScriptDeclarations: TypeScriptModuleDeclarations? = nil,
+        isEnvironmentModule: Bool = true
     ) throws {
         try validateModuleSpecifier(specifier)
         guard moduleSources[specifier] == nil,
@@ -153,6 +159,12 @@ extension QuickJSEngine {
             source: source,
             sourceURL: sourceURL
         )
+        if isEnvironmentModule {
+            environmentModules[specifier] = .source(
+                specifier: specifier,
+                declarations: typeScriptDeclarations
+            )
+        }
     }
 
     internal func registerLoadedModuleSource(
@@ -163,7 +175,8 @@ extension QuickJSEngine {
         try registerModuleSource(
             source.source,
             specifier: specifier,
-            sourceURL: source.sourceURL
+            sourceURL: source.sourceURL,
+            typeScriptDeclarations: source.typeScriptDeclarations
         )
     }
 

@@ -370,14 +370,17 @@ happy path.
 - ES modules, Swift-defined modules, lexical resolution, asynchronous custom
   loading, preload, top-level await, and canonical namespace identity.
 
-### Phase 5 — TypeScript and IDE tooling
+### Phase 5 — TypeScript and IDE tooling (completed)
 
-- Deterministic `.d.ts` generation from binding descriptions.
-- Globals, modules, interfaces, overloads, docs, enums, and source maps.
-- Reproducible editor workspace generation and synchronization.
+- Explicit macro-ready schemas and detached environment snapshots.
+- Deterministic `.d.ts` generation for globals, exports, modules, models, docs,
+  and enum literal unions.
+- Reproducible managed editor workspaces with safe explicit regeneration.
 
-### Phase 6 — macros and ecosystem maturity
+### Phase 6 — templates, macros, and ecosystem maturity
 
+- Declarative runtime templates for efficient creation of many identically
+  configured independent runtimes.
 - Optional macro target that emits canonical binding descriptions.
 - `@JavaScriptExport`-style actor and type exports.
 - Declarative runtime templates, per-instance Swift export factories, and

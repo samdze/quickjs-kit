@@ -116,7 +116,7 @@ let user: User = try await runtime.evaluate("loadUser(42)")
 ```
 
 Explicit exports make the JavaScript surface reviewable and retain metadata for
-future TypeScript generation:
+TypeScript generation:
 
 ```swift
 let binding = try await runtime.export(storage, as: "storage") { storage, export in
@@ -218,6 +218,62 @@ try await runtime.defineModule("app/native") { module in
 Module registration and Swift module definition are transactional. Loader
 configuration becomes immutable once module compilation starts.
 
+## TypeScript declarations and IDE workspaces
+
+Swift models opt into structural declarations explicitly. The schema is an
+immutable value, can describe related or recursive definitions, and is ready
+for future macro synthesis:
+
+```swift
+extension User: TypeScriptSchemaProviding {
+    static let typeScriptSchema = TypeScriptSchema.interface(
+        "User",
+        documentation: "A user visible to embedded scripts.",
+        properties: [
+            .init("id", type: .number, isReadonly: true),
+            .init("name", type: .string, isReadonly: true),
+        ]
+    )
+}
+```
+
+Capture the exact Swift-provided environment after configuring a runtime, then
+render declarations or a complete editor workspace without retaining the
+runtime:
+
+```swift
+let environment = try await runtime.environmentDescription()
+let declarations = try environment.typeScriptDeclarations()
+
+let workspace = try environment.typeScriptWorkspace(
+    options: .init(
+        sourceGlobs: ["Scripts/**/*.js", "Scripts/**/*.ts"],
+        checkJavaScript: true,
+        includePackageJSON: true
+    )
+)
+try workspace.write(to: workspaceURL)
+```
+
+The workspace contains `quickjskit.generated.d.ts`, `tsconfig.json`, and an
+optional private ESM `package.json`. A private ownership manifest makes
+regeneration idempotent and prevents QuickJSKit from replacing unrelated or
+user-modified files by default.
+
+Source modules supply companion declaration bodies explicitly:
+
+```swift
+try await runtime.registerModule(
+    "export const answer = 42;",
+    as: "app:answer",
+    typeScriptDeclarations: .init("export const answer: number;")
+)
+```
+
+Strict generation reports custom `Codable` types without a schema and source
+modules without companion declarations. `.allowUntyped` is an explicit escape
+hatch that renders these surfaces as `unknown` or untyped ambient modules.
+
 ## Concurrency and ownership
 
 `JavaScriptRuntime` is an actor. Calls into one QuickJS heap are serialized,
@@ -235,12 +291,13 @@ runtime destruction.
 
 ## Current scope
 
-Phase 4 provides evaluation, live values, direct `Codable` conversion, typed
+Phase 5 provides evaluation, live values, direct `Codable` conversion, typed
 Swift bindings and exports, native Promise interoperability, scoped runtime
 access, execution controls, ES and Swift modules, custom asynchronous loading,
-and memory observability.
+memory observability, explicit TypeScript schemas, detached environment
+snapshots, deterministic declarations, and managed IDE workspaces.
 
-TypeScript rendering, IDE workspaces, macros, reflection-based exports,
+Runtime templates, macros, reflection-based exports, declaration source maps,
 computed properties, workers, and `AbortSignal` integration remain deliberate
 future phases. See [Architecture](Documentation/Architecture.md), the
 [decision records](Documentation/Decisions), and [AGENTS.md](AGENTS.md) before

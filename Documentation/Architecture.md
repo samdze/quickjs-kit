@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the implemented Phase 4 architecture and the stable
+This document describes the implemented Phase 5 architecture and the stable
 boundaries reserved for later platform capabilities. Features identified as
 future work are design constraints, not current API promises.
 
@@ -17,6 +17,7 @@ JavaScriptRuntime actor
     ├── native Promise jobs, host waiters, cancellation, and rejection reports
     ├── ES modules, Swift modules, and asynchronous source loading
     ├── live-value identity and lifetime coordination
+    ├── detached environment metadata and TypeScript schema capture
     └── QuickJSEngine (internal, non-Sendable)
             ├── one JSRuntime heap and one JSContext realm
             ├── one top-level execution scope and interrupt callback
@@ -284,6 +285,47 @@ failure removes every provisional binding and value. A published Swift module
 remains registered for the runtime lifetime because native module identity
 cannot be safely unloaded.
 
+## Environment metadata and TypeScript tooling
+
+Every typed function and value records a detached type shape when its runtime
+definition is created. Globals, object exports, and Swift modules publish that
+metadata through one actor-owned environment registry only after the matching
+QuickJS operation succeeds. Registry ownership follows binding identity, so a
+stale binding cannot remove metadata for a newer replacement. Direct global
+assignments and deletions follow the same success-first rule.
+
+Custom Codable models opt into structural tooling through
+`TypeScriptSchemaProviding`. A schema contains a primary `TypeScriptType` plus
+flat named definitions, allowing recursive and mutually recursive models
+without recursive Swift storage. Primitive and Foundation shapes are inferred
+from the same generic types used by direct conversion. Conflicting named
+definitions fail deterministically; identical definitions are deduplicated.
+
+`JavaScriptRuntime.environmentDescription()` copies the currently exposed
+Swift-provided globals, exported objects, Swift modules, known source modules,
+and reachable schemas into one immutable snapshot. The snapshot contains no
+runtime identifier, live value, closure, actor, QuickJS pointer, or invocation
+thunk. JavaScript-created globals and unknown future loader results are excluded.
+The same value model is the output boundary reserved for future runtime
+templates.
+
+Declaration rendering is a pure transformation over that snapshot. Strict
+generation rejects custom Codable types without schemas and source modules
+without companion declaration bodies. Permissive generation emits explicit
+`unknown` types and untyped ambient modules. Rendering order and whitespace are
+canonical, and JavaScript documentation becomes escaped JSDoc. Source module
+companions are wrapped under their canonical module specifier; QuickJSKit does
+not infer types from source text.
+
+`TypeScriptWorkspace` is another detached value. It generates one declaration
+file, a strict no-emit `tsconfig.json`, and optionally a private ESM
+`package.json`. Filesystem writing occurs outside runtime isolation. A private
+content-hash manifest restricts updates to files QuickJSKit previously created;
+the default policy preserves modified generated files, both policies preserve
+unrelated files, obsolete unchanged files are removed, and staged replacement
+restores prior managed content if an operation fails. Relative-path validation
+and managed-path symlink rejection keep regeneration inside its destination.
+
 ## Resource observability
 
 Runtime configuration includes allocator and stack limits plus a default active
@@ -294,10 +336,10 @@ not a promise that all host-retained values will disappear.
 
 ## Stable future boundaries
 
-TypeScript declarations and IDE workspaces will consume detached binding
-descriptions, including their global, object-export, and module locations.
-Future macros must emit the same binding drafts and may not create a parallel
-registration or module system. Workers, multiple contexts, source maps,
+Future runtime templates will produce the same detached environment snapshot
+without constructing QuickJS. Future macros must emit the same schemas and
+binding drafts and may not create a parallel registration or module system.
+Workers, multiple contexts, declaration source maps,
 persistent bytecode, import attributes, and blocking Atomics remain deferred.
 
 ## Error model
@@ -332,8 +374,8 @@ Android use their native Swift toolchains and remain equal API targets.
 - QuickJS receives source and strings with explicit UTF-8 byte lengths.
 - Binding invocation uses generic static thunks and explicit exports rather
   than reflection.
-- TypeScript generation will operate on detached metadata without starting
-  QuickJS.
+- TypeScript generation operates on detached metadata without entering or
+  retaining QuickJS.
 
 Benchmarks will cover creation, evaluation, conversion, callbacks, promises,
 and module loading before performance-specific abstractions are accepted.
@@ -383,6 +425,9 @@ Sanitizers and warning-as-error builds are release gates, not optional cleanup.
 | Modules | Registered source plus compile-discover-load-retry | Async loading never suspends inside a QuickJS callback |
 | Swift modules | Native modules using canonical binding drafts | Globals, exports, modules, tooling, and future macros share one model |
 | Observability | Stable memory summary and explicit collection | Callers gain useful controls without exposing QuickJS-specific counters |
+| Type metadata | Explicit schemas captured with canonical binding shapes | Runtime behavior stays valid without tooling metadata; strict generation remains honest |
+| Tooling | Immutable environment snapshots and pure deterministic rendering | Runtimes and future templates share one declaration model |
+| Workspace writes | Detached files plus a content-hash ownership manifest | Regeneration is safe without watchers or runtime filesystem access |
 | Portability | Portable core and tiny future adapters | Identical public API across supported platforms |
 | Distribution | Pinned upstream source in a C target | Reproducible builds and auditable upgrades |
 

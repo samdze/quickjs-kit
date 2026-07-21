@@ -2,9 +2,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "tsc --project tsconfig.json"
+    "test": "tsc --project tsconfig.json && npm run test:tsdoc",
+    "test:tsdoc": "node validate-tsdoc.mjs"
   },
   "devDependencies": {
+    "@microsoft/tsdoc": "0.16.0",
     "typescript": "7.0.2"
   }
 }

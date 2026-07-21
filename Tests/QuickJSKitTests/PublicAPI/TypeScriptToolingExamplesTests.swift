@@ -47,10 +47,513 @@ struct TypeScriptToolingExamplesTests {
 
         /**
          * Loads a user.
+         *
          * @throws When the Swift operation fails.
          */
         declare function loadUser(id: number | bigint, nickname?: string | null): Promise<QuickJSKit.User | null>;
         """ + "\n")
+    }
+
+    @Test("structured TSDoc describes complete function behavior to IDEs")
+    func structuredTSDocDescribesFunctions() async throws {
+        let runtime = try JavaScriptRuntime()
+        try await runtime.function(
+            "loadUser",
+            options: .init(
+                parameterNames: ["id"],
+                documentation: .init(
+                    summary: "Loads a user.",
+                    remarks: "Uses the host database and returns `null` when no user exists.",
+                    parameters: ["id": "Stable user identifier."],
+                    returns: "The matching {@link QuickJSKit.User}, or `null`.",
+                    errors: [
+                        .init(
+                            reference: "SwiftError",
+                            description: "The database operation failed."
+                        ),
+                        .init(description: "The request was cancelled."),
+                    ],
+                    examples: [
+                        .init(
+                            title: "Load one user",
+                            body: """
+                            ```ts
+                            const user = await loadUser(42);
+                            ```
+                            """
+                        ),
+                    ],
+                    seeAlso: ["{@link QuickJSKit.User}"],
+                    deprecated: "Use {@link fetchUser} instead."
+                )
+            )
+        ) { (_: Int64) async throws -> User? in
+            User(id: 42, name: "Ada")
+        }
+
+        let declarations = try await runtime.environmentDescription()
+            .typeScriptDeclarations()
+
+        #expect(declarations.contains("""
+        /**
+         * Loads a user.
+         *
+         * @remarks
+         * Uses the host database and returns `null` when no user exists.
+         *
+         * @param id - Stable user identifier.
+         *
+         * @returns The matching {@link QuickJSKit.User}, or `null`.
+         *
+         * @throws {@link SwiftError}
+         * The database operation failed.
+         *
+         * @throws
+         * The request was cancelled.
+         *
+         * @example Load one user
+         * ```ts
+         * const user = await loadUser(42);
+         * ```
+         *
+         * @see {@link QuickJSKit.User}
+         *
+         * @deprecated Use {@link fetchUser} instead.
+         */
+        declare function loadUser(id: number | bigint): Promise<QuickJSKit.User | null>;
+        """))
+    }
+
+    @Test("schemas render rich documentation defaults and enum case guidance")
+    func schemasRenderRichDocumentation() async throws {
+        let schema = TypeScriptSchema(
+            type: .named("Preferences"),
+            definitions: [
+                .interface(
+                    name: "Preferences",
+                    documentation: .init(
+                        summary: "User-visible preferences.",
+                        remarks: "Values are immutable snapshots."
+                    ),
+                    properties: [
+                        .init(
+                            "theme",
+                            type: .named("Theme"),
+                            isReadonly: true,
+                            documentation: "The selected color theme.",
+                            defaultValue: #""system""#
+                        ),
+                    ]
+                ),
+                .enumeration(
+                    name: "Theme",
+                    documentation: "A supported color theme.",
+                    cases: [
+                        .init(
+                            "system",
+                            value: .string("system"),
+                            documentation: "Follows the operating system."
+                        ),
+                        .init(
+                            "dark",
+                            value: .string("dark"),
+                            documentation: "Always uses dark colors."
+                        ),
+                    ]
+                ),
+            ]
+        )
+        let runtime = try JavaScriptRuntime()
+        let declarations = try await runtime.environmentDescription(including: [schema])
+            .typeScriptDeclarations()
+
+        #expect(declarations.contains("@remarks\n     * Values are immutable snapshots."))
+        #expect(declarations.contains("@defaultValue \"system\""))
+        #expect(declarations.contains("`system` (`\"system\"`): Follows the operating system."))
+        #expect(declarations.contains("`dark` (`\"dark\"`): Always uses dark colors."))
+    }
+
+    @Test("objects globals and modules expose container documentation")
+    func containersExposeDocumentation() async throws {
+        final class Store: Sendable {}
+
+        let runtime = try JavaScriptRuntime()
+        try await runtime.global.set(
+            "1.0",
+            forProperty: "version",
+            documentation: "The host API version."
+        )
+        try await runtime.export(
+            Store(),
+            as: "store",
+            documentation: "Persistent application storage."
+        ) { _, export in
+            export.value(
+                true,
+                as: "available",
+                documentation: "Whether storage is available."
+            )
+        }
+        try await runtime.defineModule(
+            "host:settings",
+            documentation: "Host-provided settings."
+        ) { module in
+            module.value("dark", as: "theme", documentation: "The active theme.")
+        }
+        try await runtime.registerModule(
+            "export const platform = 'swift';",
+            as: "host:platform",
+            documentation: "Platform information.",
+            typeScriptDeclarations: .init("export const platform: string;")
+        )
+
+        let declarations = try await runtime.environmentDescription()
+            .typeScriptDeclarations()
+        #expect(declarations.contains("/** The host API version. */\ndeclare let version"))
+        #expect(declarations.contains("/** Persistent application storage. */\ndeclare const store"))
+        #expect(declarations.contains("/** Host-provided settings. */\ndeclare module \"host:settings\""))
+        #expect(declarations.contains("/** Platform information. */\ndeclare module \"host:platform\""))
+    }
+
+    @Test("complete documentation mode reports missing fields precisely")
+    func completeDocumentationReportsMissingFields() async throws {
+        let runtime = try JavaScriptRuntime()
+        try await runtime.function(
+            "lookup",
+            options: .init(
+                parameterNames: ["id"],
+                documentation: .init(summary: "Looks up a value.")
+            )
+        ) { (_: Int) throws -> String in "value" }
+        let environment = try await runtime.environmentDescription()
+
+        do {
+            _ = try environment.typeScriptDeclarations(
+                options: .init(documentationCompleteness: .requireComplete)
+            )
+            Issue.record("Generation unexpectedly accepted incomplete documentation.")
+        } catch let error as TypeScriptToolingError {
+            #expect(error.message.contains("parameter 'id'"))
+            #expect(error.message.contains("function 'lookup'"))
+        }
+
+        let permissive = try environment.typeScriptDeclarations()
+        #expect(permissive.contains("@throws When the Swift operation fails."))
+    }
+
+    @Test("complete documentation mode accepts a fully documented environment")
+    func completeDocumentationAcceptsCompleteEnvironment() async throws {
+        let schema = TypeScriptSchema.interface(
+            "Result",
+            documentation: "A lookup result.",
+            properties: [
+                .init("value", type: .string, documentation: "The stored value."),
+            ]
+        )
+        let runtime = try JavaScriptRuntime()
+        try await runtime.function(
+            "lookup",
+            options: .init(
+                parameterNames: ["id"],
+                documentation: .init(
+                    summary: "Looks up a value.",
+                    parameters: ["id": "Stable lookup identifier."],
+                    returns: "The stored value.",
+                    errors: [.init(description: "The lookup failed.")]
+                )
+            )
+        ) { (_: Int) throws -> String in "value" }
+
+        let declarations = try await runtime.environmentDescription(including: [schema])
+            .typeScriptDeclarations(
+                options: .init(documentationCompleteness: .requireComplete)
+            )
+        #expect(declarations.contains("declare function lookup"))
+        #expect(declarations.contains("interface Result"))
+    }
+
+    @Test("complete documentation validates every generated symbol category")
+    func completeDocumentationValidatesEverySymbolCategory() async throws {
+        func strictFailure(
+            _ environment: JavaScriptEnvironmentDescription
+        ) -> String {
+            let result = Result {
+                try environment.typeScriptDeclarations(
+                    options: .init(documentationCompleteness: .requireComplete)
+                )
+            }
+            switch result {
+            case .success:
+                Issue.record("Generation unexpectedly accepted incomplete TSDoc.")
+                return ""
+            case let .failure(error):
+                guard let toolingError = error as? TypeScriptToolingError else {
+                    Issue.record("Generation produced the wrong error type: \(error)")
+                    return ""
+                }
+                return toolingError.message
+            }
+        }
+
+        let returnRuntime = try JavaScriptRuntime()
+        try await returnRuntime.function(
+            "value",
+            options: .init(documentation: "Returns a value.")
+        ) { () -> String in "value" }
+        #expect(strictFailure(try await returnRuntime.environmentDescription()).contains(
+            "return value"
+        ))
+
+        let errorRuntime = try JavaScriptRuntime()
+        try await errorRuntime.function(
+            "value",
+            options: .init(
+                documentation: .init(
+                    summary: "Returns a value.",
+                    returns: "The value."
+                )
+            )
+        ) { () throws -> String in "value" }
+        #expect(strictFailure(try await errorRuntime.environmentDescription()).contains(
+            "thrown error"
+        ))
+
+        let globalRuntime = try JavaScriptRuntime()
+        try await globalRuntime.global.set("value", forProperty: "value")
+        #expect(strictFailure(try await globalRuntime.environmentDescription()).contains(
+            "global value 'value'"
+        ))
+
+        final class Root: Sendable {}
+        let objectRuntime = try JavaScriptRuntime()
+        try await objectRuntime.export(Root(), as: "root") { _, export in
+            export.value("value", as: "value", documentation: "The value.")
+        }
+        #expect(strictFailure(try await objectRuntime.environmentDescription()).contains(
+            "exported object 'root'"
+        ))
+
+        let moduleRuntime = try JavaScriptRuntime()
+        try await moduleRuntime.defineModule("host:values") { module in
+            module.value("value", as: "value", documentation: "The value.")
+        }
+        #expect(strictFailure(try await moduleRuntime.environmentDescription()).contains(
+            "Swift module 'host:values'"
+        ))
+
+        let sourceRuntime = try JavaScriptRuntime()
+        try await sourceRuntime.registerModule(
+            "export const value = 'value';",
+            as: "host:source",
+            typeScriptDeclarations: .init("export const value: string;")
+        )
+        #expect(strictFailure(try await sourceRuntime.environmentDescription()).contains(
+            "source module 'host:source'"
+        ))
+
+        let definitionRuntime = try JavaScriptRuntime()
+        let undocumentedDefinition = TypeScriptSchema.interface(
+            "Undocumented",
+            properties: [.init("value", type: .string, documentation: "The value.")]
+        )
+        #expect(strictFailure(
+            try await definitionRuntime.environmentDescription(
+                including: [undocumentedDefinition]
+            )
+        ).contains("TypeScript definition 'Undocumented'"))
+
+        let undocumentedProperty = TypeScriptSchema.interface(
+            "Container",
+            documentation: "A documented container.",
+            properties: [.init("value", type: .string)]
+        )
+        #expect(strictFailure(
+            try await definitionRuntime.environmentDescription(
+                including: [undocumentedProperty]
+            )
+        ).contains("TypeScript property 'Container.value'"))
+
+        let undocumentedCase = TypeScriptSchema.enumeration(
+            "State",
+            documentation: "A documented state.",
+            cases: [.init("ready", value: .string("ready"))]
+        )
+        #expect(strictFailure(
+            try await definitionRuntime.environmentDescription(
+                including: [undocumentedCase]
+            )
+        ).contains("TypeScript enum case 'State.ready'"))
+    }
+
+    @Test("TSDoc text is normalized and cannot inject block tags")
+    func tsdocTextIsSafe() async throws {
+        let runtime = try JavaScriptRuntime()
+        try await runtime.global.set(
+            "value",
+            forProperty: "safe",
+            documentation: .init(
+                summary: """
+
+                Safe summary.
+                @deprecated Injected tag. */
+
+                """,
+                seeAlso: ["{@link QuickJSKit.User}"]
+            )
+        )
+
+        let declarations = try await runtime.environmentDescription()
+            .typeScriptDeclarations()
+        #expect(declarations.contains("Safe summary."))
+        #expect(declarations.contains("&#64;deprecated Injected tag. *\\/"))
+        #expect(declarations.contains("@see {@link QuickJSKit.User}"))
+        #expect(!declarations.contains("\n * @deprecated Injected tag"))
+    }
+
+    @Test("replacement and stale removal preserve the current documentation owner")
+    func replacementPreservesCurrentDocumentation() async throws {
+        let runtime = try JavaScriptRuntime()
+        let stale = try await runtime.function(
+            "value",
+            options: .init(documentation: "Old function documentation.")
+        ) { () -> String in "old" }
+        try await runtime.global.set(
+            "new",
+            forProperty: "value",
+            documentation: "Current value documentation."
+        )
+        _ = try await stale.remove()
+
+        let declarations = try await runtime.environmentDescription()
+            .typeScriptDeclarations()
+        #expect(declarations.contains("Current value documentation."))
+        #expect(!declarations.contains("Old function documentation."))
+    }
+
+    @Test("workspace declarations preserve the exact structured TSDoc snapshot")
+    func workspacePreservesStructuredTSDoc() async throws {
+        let runtime = try JavaScriptRuntime()
+        try await runtime.function(
+            "answer",
+            options: .init(
+                documentation: .init(
+                    summary: "Returns the answer.",
+                    returns: "The answer."
+                )
+            )
+        ) { () -> Int in 42 }
+        let environment = try await runtime.environmentDescription()
+        let options = TypeScriptDeclarationOptions(
+            documentationCompleteness: .requireComplete
+        )
+        let declarations = try environment.typeScriptDeclarations(options: options)
+        let workspace = try environment.typeScriptWorkspace(
+            options: .init(declarationOptions: options)
+        )
+
+        #expect(workspace.files.first {
+            $0.path == "quickjskit.generated.d.ts"
+        }?.contents == declarations)
+    }
+
+    @Test("invalid parameter documentation fails transactionally")
+    func invalidParameterDocumentationFailsTransactionally() async throws {
+        let runtime = try JavaScriptRuntime()
+
+        await #expect(throws: JavaScriptError.self) {
+            try await runtime.function(
+                "lookup",
+                options: .init(
+                    parameterNames: ["id"],
+                    documentation: .init(
+                        summary: "Looks up a value.",
+                        parameters: ["identifier": "An unknown parameter."]
+                    )
+                )
+            ) { (_: Int) -> String in "value" }
+        }
+        let type: String = try await runtime.evaluate("typeof lookup")
+        #expect(type == "undefined")
+
+        await #expect(throws: JavaScriptError.self) {
+            try await runtime.function(
+                "unsafeError",
+                options: .init(
+                    documentation: .init(
+                        summary: "Throws an error.",
+                        errors: [
+                            .init(
+                                reference: "Error}",
+                                description: "An unsafe link target."
+                            ),
+                        ]
+                    )
+                )
+            ) { () throws -> Void in }
+        }
+        let unsafeType: String = try await runtime.evaluate("typeof unsafeError")
+        #expect(unsafeType == "undefined")
+    }
+
+    @Test("loader-provided module documentation joins later snapshots")
+    func loaderDocumentationJoinsSnapshots() async throws {
+        let runtime = try JavaScriptRuntime()
+        try await runtime.setModuleLoader(
+            JavaScriptModuleLoader { request in
+                JavaScriptModuleSource(
+                    source: "export const value = 42;",
+                    sourceURL: "memory:///\(request.specifier).js",
+                    documentation: "A lazily loaded module.",
+                    typeScriptDeclarations: .init("export const value: number;")
+                )
+            }
+        )
+        try await runtime.preloadModule("lazy")
+
+        let declarations = try await runtime.environmentDescription()
+            .typeScriptDeclarations()
+        #expect(declarations.contains(
+            "/** A lazily loaded module. */\ndeclare module \"lazy\""
+        ))
+    }
+
+    @Test("invalid source module documentation rolls back registration")
+    func invalidSourceDocumentationRollsBack() async throws {
+        let runtime = try JavaScriptRuntime()
+        await #expect(throws: JavaScriptError.self) {
+            try await runtime.registerModule(
+                "export const value = 1;",
+                as: "host:value",
+                documentation: .init(summary: "Invalid\0documentation."),
+                typeScriptDeclarations: .init("export const value: number;")
+            )
+        }
+
+        try await runtime.registerModule(
+            "export const value = 2;",
+            as: "host:value",
+            documentation: "Valid module documentation.",
+            typeScriptDeclarations: .init("export const value: number;")
+        )
+        let module = try await runtime.importModule("host:value")
+        let value: Int = try await module.value(forExport: "value", as: Int.self)
+        #expect(value == 2)
+    }
+
+    @Test("documented assignments are restricted to the runtime global object")
+    func documentedAssignmentsRequireGlobalObject() async throws {
+        let runtime = try JavaScriptRuntime()
+        let raw = try await runtime.evaluate("({})")
+        let object = try #require(raw.objectValue)
+
+        await #expect(throws: JavaScriptError.self) {
+            try await object.set(
+                42,
+                forProperty: "answer",
+                documentation: "The answer."
+            )
+        }
+        #expect(try await object.hasProperty("answer") == false)
     }
 
     @Test("globals objects and Swift modules share the same schema metadata")

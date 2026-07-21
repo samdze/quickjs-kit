@@ -6,7 +6,6 @@ extension QuickJSEngine {
         _ value: T,
         maximumNestingDepth: Int
     ) throws -> ManagedQuickJSValue {
-        prepareForEngineCall()
         guard maximumNestingDepth > 0 else {
             throw EncodingError.invalidValue(
                 maximumNestingDepth,

@@ -41,7 +41,7 @@ internal struct BindingDescription: Sendable, Hashable {
     internal let order: UInt64
 }
 
-internal struct BindingDraft {
+internal struct BindingDraft: Sendable {
     internal let name: String
     internal let parameters: [BindingParameterDescription]
     internal let result: BindingTypeShape

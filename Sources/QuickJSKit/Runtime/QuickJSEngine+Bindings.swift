@@ -1,38 +1,57 @@
 internal import CQuickJS
 
-internal final class QuickJSCallbackBridge {
-    internal weak var engine: QuickJSEngine?
-}
-
 internal enum BindingInvocation {
     case synchronous(ManagedQuickJSValue)
-    case asynchronous(@Sendable (UInt64) -> Task<Void, Never>)
+    case asynchronous(@Sendable () async -> BindingCompletion)
 }
 
-internal struct AnyBindingInvocation {
+internal struct BindingResult: Sendable {
+    internal let encode: @Sendable (QuickJSEngine) throws -> ManagedQuickJSValue
+}
+
+internal enum BindingCompletion: Sendable {
+    case success(BindingResult)
+    case failure(any Error)
+}
+
+internal typealias BindingSettlement = @Sendable (
+    UInt64,
+    BindingCompletion
+) async -> Void
+
+internal struct BoundFunction {
     internal let description: BindingDescription
-    internal let invoke: (QuickJSEngine, [ManagedQuickJSValue]) throws -> BindingInvocation
+    internal let invoke: @Sendable (
+        QuickJSEngine,
+        [ManagedQuickJSValue]
+    ) throws -> BindingInvocation
+    internal let settle: BindingSettlement
 }
 
-internal struct AnyBindingDraft {
+internal struct BindingDefinition: Sendable {
     internal let draft: BindingDraft
-    internal let invoke: (QuickJSEngine, [ManagedQuickJSValue]) throws -> BindingInvocation
+    internal let invoke: @Sendable (
+        QuickJSEngine,
+        [ManagedQuickJSValue]
+    ) throws -> BindingInvocation
 
-    internal func finalize(
+    internal func bind(
         location: BindingDescription.Location,
-        order: UInt64
-    ) -> AnyBindingInvocation {
-        AnyBindingInvocation(
+        order: UInt64,
+        settle: @escaping BindingSettlement
+    ) -> BoundFunction {
+        BoundFunction(
             description: draft.finalize(location: location, order: order),
-            invoke: invoke
+            invoke: invoke,
+            settle: settle
         )
     }
 }
 
-internal final class RegisteredSwiftBinding {
+internal final class RegisteredBinding {
     internal let identifier: UInt64
     internal let name: String
-    internal let invocation: AnyBindingInvocation?
+    internal let function: BoundFunction?
     internal let root: (any AnyObject & Sendable)?
     internal var exposedValue: ManagedQuickJSValue?
     internal var isActive = true
@@ -42,12 +61,12 @@ internal final class RegisteredSwiftBinding {
     internal init(
         identifier: UInt64,
         name: String,
-        invocation: AnyBindingInvocation?,
+        function: BoundFunction?,
         root: (any AnyObject & Sendable)? = nil
     ) {
         self.identifier = identifier
         self.name = name
-        self.invocation = invocation
+        self.function = function
         self.root = root
     }
 }
@@ -56,24 +75,20 @@ internal struct PendingSwiftPromise {
     internal let bindingIdentifier: UInt64
     internal let resolve: ManagedQuickJSValue
     internal let reject: ManagedQuickJSValue
-    internal let promiseAddress: UInt
     internal var task: Task<Void, Never>?
 }
 
 internal final class HostPromiseWaiter {
     internal let promise: ManagedQuickJSValue
-    internal let producerOperationIdentifier: UInt64?
     internal let poll: (QuickJSEngine, ManagedQuickJSValue) -> Bool
-    internal let cancel: () -> Void
+    internal let cancel: (QuickJSEngine) -> Void
 
     internal init(
         promise: ManagedQuickJSValue,
-        producerOperationIdentifier: UInt64?,
         poll: @escaping (QuickJSEngine, ManagedQuickJSValue) -> Bool,
-        cancel: @escaping () -> Void
+        cancel: @escaping (QuickJSEngine) -> Void
     ) {
         self.promise = promise
-        self.producerOperationIdentifier = producerOperationIdentifier
         self.poll = poll
         self.cancel = cancel
     }
@@ -84,14 +99,13 @@ extension QuickJSEngine {
 
     internal func registerGlobalBinding(
         named name: String,
-        invocation: AnyBindingInvocation
+        function: BoundFunction
     ) throws -> (UInt64, EngineJavaScriptValue) {
-        prepareForEngineCall()
         let identifier = try allocateBindingIdentifier()
-        let record = RegisteredSwiftBinding(
+        let record = RegisteredBinding(
             identifier: identifier,
             name: name,
-            invocation: invocation
+            function: function
         )
         swiftBindings[identifier] = record
 
@@ -99,7 +113,7 @@ extension QuickJSEngine {
             let function = try makeBoundFunction(
                 bindingIdentifier: identifier,
                 name: name,
-                length: invocation.description.parameters.count
+                length: function.description.parameters.count
             )
             record.exposedValue = ManagedQuickJSValue(
                 JS_DupValue(context, function.raw),
@@ -126,7 +140,6 @@ extension QuickJSEngine {
         _ identifier: UInt64,
         cancellingInFlight: Bool
     ) throws -> Bool {
-        prepareForEngineCall()
         guard let binding = swiftBindings[identifier], binding.isActive else { return false }
         binding.isActive = false
 
@@ -163,9 +176,9 @@ extension QuickJSEngine {
     internal func registerExport(
         named name: String,
         root: any AnyObject & Sendable,
-        members: [JavaScriptExportMemberDefinition]
+        members: [JavaScriptExportMemberDefinition],
+        settle: @escaping BindingSettlement
     ) throws -> (UInt64, EngineJavaScriptValue) {
-        prepareForEngineCall()
         guard !BindingValidation.hasDuplicateNames(members.map(\.name)) else {
             throw JavaScriptError(
                 kind: .conversion,
@@ -174,10 +187,10 @@ extension QuickJSEngine {
         }
 
         let exportIdentifier = try allocateBindingIdentifier()
-        let exportRecord = RegisteredSwiftBinding(
+        let exportRecord = RegisteredBinding(
             identifier: exportIdentifier,
             name: name,
-            invocation: nil,
+            function: nil,
             root: root
         )
         swiftBindings[exportIdentifier] = exportRecord
@@ -188,33 +201,34 @@ extension QuickJSEngine {
             if JS_IsException(object.raw) != 0 { throw extractException() }
             for (memberOrder, member) in members.enumerated() {
                 switch member.storage {
-                case let .function(draft):
+                case let .function(definition):
                     let childIdentifier = try allocateBindingIdentifier()
-                    let invocation = draft.finalize(
+                    let boundFunction = definition.bind(
                         location: .objectExport(name: name),
-                        order: UInt64(memberOrder)
+                        order: UInt64(memberOrder),
+                        settle: settle
                     )
-                    let child = RegisteredSwiftBinding(
+                    let child = RegisteredBinding(
                         identifier: childIdentifier,
                         name: member.name,
-                        invocation: invocation,
+                        function: boundFunction,
                         root: root
                     )
                     swiftBindings[childIdentifier] = child
                     createdChildren.append(childIdentifier)
-                    let function = try makeBoundFunction(
+                    let rawFunction = try makeBoundFunction(
                         bindingIdentifier: childIdentifier,
                         name: member.name,
-                        length: invocation.description.parameters.count
+                        length: boundFunction.description.parameters.count
                     )
                     child.exposedValue = ManagedQuickJSValue(
-                        JS_DupValue(context, function.raw),
+                        JS_DupValue(context, rawFunction.raw),
                         in: context
                     )
                     try defineProperty(
                         member.name,
                         on: object.raw,
-                        value: function.raw,
+                        value: rawFunction.raw,
                         flags: 0
                     )
                 case let .value(encode):
@@ -223,6 +237,14 @@ extension QuickJSEngine {
                         member.name,
                         on: object.raw,
                         value: value.raw,
+                        flags: Int32(JS_PROP_ENUMERABLE)
+                    )
+                case let .liveValue(value):
+                    let materialized = try materialize(value)
+                    try defineProperty(
+                        member.name,
+                        on: object.raw,
+                        value: materialized.raw,
                         flags: Int32(JS_PROP_ENUMERABLE)
                     )
                 }
@@ -250,7 +272,6 @@ extension QuickJSEngine {
         _ operationIdentifier: UInt64,
         with result: Result<ManagedQuickJSValue, any Error>
     ) {
-        prepareForEngineCall()
         guard let pending = pendingSwiftPromises.removeValue(forKey: operationIdentifier) else {
             return
         }
@@ -269,7 +290,6 @@ extension QuickJSEngine {
     }
 
     internal func cancelSwiftPromise(_ operationIdentifier: UInt64) {
-        prepareForEngineCall()
         guard let pending = pendingSwiftPromises.removeValue(forKey: operationIdentifier) else {
             return
         }
@@ -280,7 +300,6 @@ extension QuickJSEngine {
     }
 
     internal func drainPendingJobs() throws {
-        prepareForEngineCall()
         checkpointCountForTesting += 1
         var jobContext: OpaquePointer?
         while true {
@@ -299,7 +318,7 @@ extension QuickJSEngine {
             pendingSwiftPromises[operationIdentifier]?.task?.cancel()
         }
         pendingSwiftPromises.removeAll()
-        for waiter in hostPromiseWaiters.values { waiter.cancel() }
+        for waiter in hostPromiseWaiters.values { waiter.cancel(self) }
         hostPromiseWaiters.removeAll()
         swiftBindings.removeAll()
         currentGlobalBindings.removeAll()
@@ -368,15 +387,7 @@ extension QuickJSEngine {
 
     internal func cancelHostPromiseWaiter(_ identifier: UInt64) {
         guard let waiter = hostPromiseWaiters.removeValue(forKey: identifier) else { return }
-        waiter.cancel()
-        if let producer = waiter.producerOperationIdentifier {
-            cancelSwiftPromise(producer)
-        }
-    }
-
-    internal func producerOperationIdentifier(for promise: ManagedQuickJSValue) -> UInt64? {
-        let address = quickJSObjectAddress(promise.raw)
-        return pendingSwiftPromises.first { $0.value.promiseAddress == address }?.key
+        waiter.cancel(self)
     }
 
     internal func errorFromRejectedPromise(_ promise: ManagedQuickJSValue) -> JavaScriptError {
@@ -421,7 +432,7 @@ extension QuickJSEngine {
         }
         guard let binding = swiftBindings[identifier],
               binding.isActive,
-              let invocation = binding.invocation else {
+              let function = binding.function else {
             return throwJavaScriptError(
                 name: "ReferenceError",
                 message: "This Swift binding has been removed."
@@ -435,11 +446,15 @@ extension QuickJSEngine {
             )
         }
         do {
-            switch try invocation.invoke(self, ownedArguments) {
+            switch try function.invoke(self, ownedArguments) {
             case let .synchronous(value):
                 return JS_DupValue(context, value.raw)
-            case let .asynchronous(start):
-                return try beginSwiftPromise(binding: binding, start: start)
+            case let .asynchronous(operation):
+                return try beginSwiftPromise(
+                    binding: binding,
+                    operation: operation,
+                    settle: function.settle
+                )
             }
         } catch let decodingError as DecodingError {
             return throwJavaScriptError(
@@ -453,8 +468,9 @@ extension QuickJSEngine {
     }
 
     private func beginSwiftPromise(
-        binding: RegisteredSwiftBinding,
-        start: @Sendable (UInt64) -> Task<Void, Never>
+        binding: RegisteredBinding,
+        operation: @escaping @Sendable () async -> BindingCompletion,
+        settle: @escaping BindingSettlement
     ) throws -> JSValue {
         let operationIdentifier = try allocateOperationIdentifier()
         var resolvingFunctions = [quickJSUndefined(), quickJSUndefined()]
@@ -469,11 +485,13 @@ extension QuickJSEngine {
             bindingIdentifier: binding.identifier,
             resolve: resolve,
             reject: reject,
-            promiseAddress: quickJSObjectAddress(promise.raw),
             task: nil
         )
         binding.activeOperations.insert(operationIdentifier)
-        let task = start(operationIdentifier)
+        let task = Task {
+            let completion = await operation()
+            await settle(operationIdentifier, completion)
+        }
         pendingSwiftPromises[operationIdentifier]?.task = task
         return JS_DupValue(context, promise.raw)
     }
@@ -517,7 +535,7 @@ extension QuickJSEngine {
         return string(from: property.raw)
     }
 
-    private func discardBindingIfFinished(_ binding: RegisteredSwiftBinding) {
+    private func discardBindingIfFinished(_ binding: RegisteredBinding) {
         guard !binding.isActive, binding.activeOperations.isEmpty else { return }
         swiftBindings.removeValue(forKey: binding.identifier)
     }
@@ -655,7 +673,7 @@ private let quickJSKitBindingTrampoline: @convention(c) (
           let opaque = JS_GetRuntimeOpaque(runtime) else {
         return quickJSUndefined()
     }
-    let bridge = Unmanaged<QuickJSCallbackBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let bridge = Unmanaged<QuickJSRuntimeBridge>.fromOpaque(opaque).takeUnretainedValue()
     guard let engine = bridge.engine else { return quickJSUndefined() }
     var identifier: Int64 = 0
     guard JS_ToInt64(context, &identifier, functionData[0]) == 0, identifier > 0 else {
@@ -677,7 +695,7 @@ internal let quickJSKitPromiseRejectionTracker: @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Void = { _, promise, reason, isHandled, opaque in
     guard let opaque else { return }
-    let bridge = Unmanaged<QuickJSCallbackBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let bridge = Unmanaged<QuickJSRuntimeBridge>.fromOpaque(opaque).takeUnretainedValue()
     bridge.engine?.recordPromiseRejection(
         promise: promise,
         reason: reason,
@@ -690,6 +708,6 @@ internal let quickJSKitInterruptHandler: @convention(c) (
     UnsafeMutableRawPointer?
 ) -> Int32 = { _, opaque in
     guard let opaque else { return 0 }
-    let bridge = Unmanaged<QuickJSCallbackBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let bridge = Unmanaged<QuickJSRuntimeBridge>.fromOpaque(opaque).takeUnretainedValue()
     return bridge.engine?.shouldInterrupt() == true ? 1 : 0
 }

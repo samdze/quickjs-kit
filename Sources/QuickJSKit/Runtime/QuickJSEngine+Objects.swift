@@ -5,7 +5,6 @@ extension QuickJSEngine {
         named name: String,
         on identifier: UInt64
     ) throws -> EngineJavaScriptValue {
-        prepareForEngineCall()
         return try withRawValue(for: identifier) { object in
             let raw = name.withCString { JS_GetPropertyStr(context, object, $0) }
             let value = ManagedQuickJSValue(raw, in: context)
@@ -19,7 +18,6 @@ extension QuickJSEngine {
         named name: String,
         on identifier: UInt64
     ) throws -> ManagedQuickJSValue {
-        prepareForEngineCall()
         return try withRawValue(for: identifier) { object in
             let raw = name.withCString { JS_GetPropertyStr(context, object, $0) }
             let value = ManagedQuickJSValue(raw, in: context)
@@ -33,7 +31,6 @@ extension QuickJSEngine {
         on identifier: UInt64,
         to value: ManagedQuickJSValue
     ) throws {
-        prepareForEngineCall()
         try withRawValue(for: identifier) { object in
             let result = name.withCString {
                 JS_SetPropertyStr(context, object, $0, JS_DupValue(context, value.raw))
@@ -43,7 +40,6 @@ extension QuickJSEngine {
     }
 
     internal func hasProperty(named name: String, on identifier: UInt64) throws -> Bool {
-        prepareForEngineCall()
         return try withRawValue(for: identifier) { object in
             let atom = name.withCString { JS_NewAtom(context, $0) }
             defer { JS_FreeAtom(context, atom) }
@@ -54,7 +50,6 @@ extension QuickJSEngine {
     }
 
     internal func deleteProperty(named name: String, on identifier: UInt64) throws -> Bool {
-        prepareForEngineCall()
         return try withRawValue(for: identifier) { object in
             let atom = name.withCString { JS_NewAtom(context, $0) }
             defer { JS_FreeAtom(context, atom) }
@@ -65,7 +60,6 @@ extension QuickJSEngine {
     }
 
     internal func ownEnumerablePropertyNames(of identifier: UInt64) throws -> [String] {
-        prepareForEngineCall()
         return try withRawValue(for: identifier) { object in
             try ownEnumerablePropertyNames(of: object)
         }
@@ -115,7 +109,6 @@ extension QuickJSEngine {
         guard index >= 0, let index = UInt32(exactly: index) else {
             throw JavaScriptError(kind: .conversion, message: "Array indices must fit UInt32.")
         }
-        prepareForEngineCall()
         return try withRawValue(for: identifier) { array in
             let raw = JS_GetPropertyUint32(context, array, index)
             let value = ManagedQuickJSValue(raw, in: context)
@@ -132,7 +125,6 @@ extension QuickJSEngine {
         guard index >= 0, let index = UInt32(exactly: index) else {
             throw JavaScriptError(kind: .conversion, message: "Array indices must fit UInt32.")
         }
-        prepareForEngineCall()
         try withRawValue(for: identifier) { array in
             let result = JS_SetPropertyUint32(
                 context,
@@ -163,7 +155,6 @@ extension QuickJSEngine {
         receiverIdentifier: UInt64?,
         arguments: [ManagedQuickJSValue]
     ) throws -> ManagedQuickJSValue {
-        prepareForEngineCall()
         return try withRawValue(for: functionIdentifier) { function in
             let invoke: (JSValue) throws -> ManagedQuickJSValue = { receiver in
                 var rawArguments = arguments.map(\.raw)

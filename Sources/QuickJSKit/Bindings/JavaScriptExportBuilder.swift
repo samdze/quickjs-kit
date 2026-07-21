@@ -1,14 +1,12 @@
-/// A transactional description of members exposed on a Swift-backed JavaScript object.
+/// A transactional description of Swift members exported to JavaScript.
 ///
-/// Configure exports only inside ``JavaScriptRuntime/export(_:as:_:)``. The
-/// runtime validates and encodes every member before publishing the object.
+/// Configure exports inside ``JavaScriptRuntime/export(_:as:_:)`` or
+/// ``JavaScriptRuntime/defineModule(_:_:)``. The destination runtime validates
+/// and encodes every member before publishing it.
 public struct JavaScriptExportBuilder {
-    internal let runtime: JavaScriptRuntime
     internal var members: [JavaScriptExportMemberDefinition] = []
 
-    internal init(runtime: JavaScriptRuntime) {
-        self.runtime = runtime
-    }
+    internal init() {}
 
     /// Adds a synchronous typed method.
     public mutating func function<each Argument, Result>(
@@ -17,22 +15,16 @@ public struct JavaScriptExportBuilder {
         _ body: @escaping @Sendable (repeat each Argument) -> Result
     ) where repeat each Argument: Decodable & Sendable,
             Result: Encodable & Sendable {
-        appendFunction(
+        appendSynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: bindingTypeShape(for: Result.self),
-            isAsync: false,
-            isThrowing: false
-        ) { engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            return .synchronous(
-                try engine.encode(
-                    body(repeat each decoded),
-                    maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
-                )
+            isThrowing: false,
+            body: body
+        ) { engine, result in
+            try engine.encode(
+                result,
+                maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
             )
         }
     }
@@ -44,22 +36,16 @@ public struct JavaScriptExportBuilder {
         _ body: @escaping @Sendable (repeat each Argument) throws -> Result
     ) where repeat each Argument: Decodable & Sendable,
             Result: Encodable & Sendable {
-        appendFunction(
+        appendSynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: bindingTypeShape(for: Result.self),
-            isAsync: false,
-            isThrowing: true
-        ) { engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            return .synchronous(
-                try engine.encode(
-                    body(repeat each decoded),
-                    maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
-                )
+            isThrowing: true,
+            body: body
+        ) { engine, result in
+            try engine.encode(
+                result,
+                maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
             )
         }
     }
@@ -71,22 +57,18 @@ public struct JavaScriptExportBuilder {
         _ body: @escaping @Sendable (repeat each Argument) async -> Result
     ) where repeat each Argument: Decodable & Sendable,
             Result: Encodable & Sendable {
-        appendFunction(
+        appendAsynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: bindingTypeShape(for: Result.self),
-            isAsync: true,
-            isThrowing: false
-        ) { [weak runtime] engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            return .asynchronous { [weak runtime] operationIdentifier in
-                Task {
-                    let value = await body(repeat each decoded)
-                    await runtime?.settleSwiftPromise(operationIdentifier, value: value)
-                }
+            isThrowing: false,
+            body: body
+        ) { result in
+            BindingResult { engine in
+                try engine.encode(
+                    result,
+                    maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
+                )
             }
         }
     }
@@ -98,26 +80,18 @@ public struct JavaScriptExportBuilder {
         _ body: @escaping @Sendable (repeat each Argument) async throws -> Result
     ) where repeat each Argument: Decodable & Sendable,
             Result: Encodable & Sendable {
-        appendFunction(
+        appendAsynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: bindingTypeShape(for: Result.self),
-            isAsync: true,
-            isThrowing: true
-        ) { [weak runtime] engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            return .asynchronous { [weak runtime] operationIdentifier in
-                Task {
-                    do {
-                        let value = try await body(repeat each decoded)
-                        await runtime?.settleSwiftPromise(operationIdentifier, value: value)
-                    } catch {
-                        await runtime?.settleSwiftPromise(operationIdentifier, error: error)
-                    }
-                }
+            isThrowing: true,
+            body: body
+        ) { result in
+            BindingResult { engine in
+                try engine.encode(
+                    result,
+                    maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
+                )
             }
         }
     }
@@ -128,19 +102,14 @@ public struct JavaScriptExportBuilder {
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (repeat each Argument) -> Void
     ) where repeat each Argument: Decodable & Sendable {
-        appendFunction(
+        appendSynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: .void,
-            isAsync: false,
-            isThrowing: false
-        ) { engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            body(repeat each decoded)
-            return .synchronous(ManagedQuickJSValue(quickJSUndefined(), in: engine.context))
+            isThrowing: false,
+            body: body
+        ) { engine, _ in
+            ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
         }
     }
 
@@ -150,19 +119,14 @@ public struct JavaScriptExportBuilder {
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (repeat each Argument) throws -> Void
     ) where repeat each Argument: Decodable & Sendable {
-        appendFunction(
+        appendSynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: .void,
-            isAsync: false,
-            isThrowing: true
-        ) { engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            try body(repeat each decoded)
-            return .synchronous(ManagedQuickJSValue(quickJSUndefined(), in: engine.context))
+            isThrowing: true,
+            body: body
+        ) { engine, _ in
+            ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
         }
     }
 
@@ -172,22 +136,15 @@ public struct JavaScriptExportBuilder {
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (repeat each Argument) async -> Void
     ) where repeat each Argument: Decodable & Sendable {
-        appendFunction(
+        appendAsynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: .void,
-            isAsync: true,
-            isThrowing: false
-        ) { [weak runtime] engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            return .asynchronous { [weak runtime] operationIdentifier in
-                Task {
-                    await body(repeat each decoded)
-                    await runtime?.settleSwiftPromiseWithUndefined(operationIdentifier)
-                }
+            isThrowing: false,
+            body: body
+        ) { _ in
+            BindingResult { engine in
+                ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
             }
         }
     }
@@ -198,26 +155,15 @@ public struct JavaScriptExportBuilder {
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (repeat each Argument) async throws -> Void
     ) where repeat each Argument: Decodable & Sendable {
-        appendFunction(
+        appendAsynchronousFunction(
             name,
             options: options,
-            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
             resultShape: .void,
-            isAsync: true,
-            isThrowing: true
-        ) { [weak runtime] engine, arguments in
-            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
-            let decoded: (repeat each Argument) =
-                (repeat try decoder.next((each Argument).self))
-            return .asynchronous { [weak runtime] operationIdentifier in
-                Task {
-                    do {
-                        try await body(repeat each decoded)
-                        await runtime?.settleSwiftPromiseWithUndefined(operationIdentifier)
-                    } catch {
-                        await runtime?.settleSwiftPromise(operationIdentifier, error: error)
-                    }
-                }
+            isThrowing: true,
+            body: body
+        ) { _ in
+            BindingResult { engine in
+                ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
             }
         }
     }
@@ -249,22 +195,73 @@ public struct JavaScriptExportBuilder {
         as name: String,
         documentation: String? = nil
     ) {
-        let crossRuntime: Bool
-        if case let .reference(reference) = value.storage {
-            crossRuntime = reference.runtimeIdentifier != ObjectIdentifier(runtime)
-        } else {
-            crossRuntime = false
-        }
         members.append(
             JavaScriptExportMemberDefinition(
                 name: name,
                 documentation: documentation,
-                validationMessage: crossRuntime
-                    ? "JavaScript values cannot cross runtime boundaries."
-                    : exportMemberValidationMessage(name),
-                storage: .value { engine in try engine.materialize(value) }
+                validationMessage: exportMemberValidationMessage(name),
+                storage: .liveValue(value)
             )
         )
+    }
+
+    private mutating func appendSynchronousFunction<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions,
+        resultShape: BindingTypeShape,
+        isThrowing: Bool,
+        body: @escaping @Sendable (repeat each Argument) throws -> Result,
+        encode: @escaping @Sendable (
+            QuickJSEngine,
+            Result
+        ) throws -> ManagedQuickJSValue
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: Sendable {
+        appendFunction(
+            name,
+            options: options,
+            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
+            resultShape: resultShape,
+            isAsync: false,
+            isThrowing: isThrowing
+        ) { engine, arguments in
+            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
+            let decoded: (repeat each Argument) =
+                (repeat try decoder.next((each Argument).self))
+            return .synchronous(
+                try encode(engine, body(repeat each decoded))
+            )
+        }
+    }
+
+    private mutating func appendAsynchronousFunction<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions,
+        resultShape: BindingTypeShape,
+        isThrowing: Bool,
+        body: @escaping @Sendable (repeat each Argument) async throws -> Result,
+        encode: @escaping @Sendable (Result) -> BindingResult
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: Sendable {
+        appendFunction(
+            name,
+            options: options,
+            parameterShapes: bindingParameterShapes(repeat (each Argument).self),
+            resultShape: resultShape,
+            isAsync: true,
+            isThrowing: isThrowing
+        ) { engine, arguments in
+            let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
+            let decoded: (repeat each Argument) =
+                (repeat try decoder.next((each Argument).self))
+            return .asynchronous {
+                do {
+                    return .success(encode(try await body(repeat each decoded)))
+                } catch {
+                    return .failure(error)
+                }
+            }
+        }
     }
 
     private mutating func appendFunction(
@@ -274,7 +271,10 @@ public struct JavaScriptExportBuilder {
         resultShape: BindingTypeShape,
         isAsync: Bool,
         isThrowing: Bool,
-        invocation: @escaping (QuickJSEngine, [ManagedQuickJSValue]) throws -> BindingInvocation
+        invocation: @escaping @Sendable (
+            QuickJSEngine,
+            [ManagedQuickJSValue]
+        ) throws -> BindingInvocation
     ) {
         let parameters = BindingValidation.parameterNames(
             options.parameterNames,
@@ -297,7 +297,7 @@ public struct JavaScriptExportBuilder {
                 documentation: options.documentation,
                 validationMessage: validationMessage,
                 storage: .function(
-                    AnyBindingDraft(draft: draft, invoke: invocation)
+                    BindingDefinition(draft: draft, invoke: invocation)
                 )
             )
         )
@@ -308,10 +308,11 @@ public struct JavaScriptExportBuilder {
     }
 }
 
-internal struct JavaScriptExportMemberDefinition {
-    internal enum Storage {
-        case function(AnyBindingDraft)
-        case value((QuickJSEngine) throws -> ManagedQuickJSValue)
+internal struct JavaScriptExportMemberDefinition: Sendable {
+    internal enum Storage: Sendable {
+        case function(BindingDefinition)
+        case value(@Sendable (QuickJSEngine) throws -> ManagedQuickJSValue)
+        case liveValue(JavaScriptValue)
     }
 
     internal let name: String
@@ -334,22 +335,40 @@ extension JavaScriptRuntime {
         if let message = BindingValidation.nameMessage(name, role: "Export names") {
             throw JavaScriptError(kind: .conversion, message: message)
         }
-        var builder = JavaScriptExportBuilder(runtime: self)
+        var builder = JavaScriptExportBuilder()
         configure(root, &builder)
         if let message = builder.members.lazy.compactMap(\.validationMessage).first {
             throw JavaScriptError(kind: .conversion, message: message)
         }
-        return try engine.withExecution(options: .init()) {
+        try validateLiveValues(in: builder.members)
+        return try engine.withEngineEntry() {
             let (identifier, rawValue) = try engine.registerExport(
                 named: name,
                 root: root,
-                members: builder.members
+                members: builder.members,
+                settle: bindingSettlement
             )
             return JavaScriptBinding(
                 name: name,
                 value: makeValue(rawValue),
                 reference: JavaScriptBindingReference(runtime: self, identifier: identifier)
             )
+        }
+    }
+
+    internal var bindingSettlement: BindingSettlement {
+        { [weak self] identifier, completion in
+            await self?.settleSwiftPromise(identifier, completion: completion)
+        }
+    }
+
+    internal func validateLiveValues(
+        in members: [JavaScriptExportMemberDefinition]
+    ) throws {
+        for member in members {
+            if case let .liveValue(value) = member.storage {
+                try validate(value)
+            }
         }
     }
 }

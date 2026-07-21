@@ -44,6 +44,16 @@ public actor JavaScriptRuntime {
         self.engine = try QuickJSEngine(configuration: configuration)
     }
 
+    deinit {
+        for operation in moduleLoadOperations.values {
+            operation.task?.cancel()
+            for continuation in operation.waiters.values {
+                continuation.resume(throwing: CancellationError())
+            }
+        }
+        moduleLoadOperations.removeAll()
+    }
+
     /// A codec that directly creates JavaScript values in this runtime.
     public nonisolated var encoder: JavaScriptEncoder {
         JavaScriptEncoder(runtime: self)
@@ -90,7 +100,7 @@ public actor JavaScriptRuntime {
     ///
     /// The closure executes as one uninterrupted actor turn. Individual
     /// JavaScript calls still establish their own execution checkpoints.
-    public func perform<Result: Sendable>(
+    public func run<Result: Sendable>(
         _ operation: @Sendable (isolated JavaScriptRuntime) throws -> Result
     ) rethrows -> Result {
         try operation(self)
@@ -100,15 +110,20 @@ public actor JavaScriptRuntime {
     ///
     /// The closure may suspend and is actor-reentrant at every suspension
     /// point; this overload is therefore not a transaction.
-    public func perform<Result: Sendable>(
+    public func run<Result: Sendable>(
         _ operation: @Sendable (isolated JavaScriptRuntime) async throws -> Result
     ) async rethrows -> Result {
         try await operation(self)
     }
 
     internal func releaseReference(_ identifier: UInt64) {
-        engine.prepareForEngineCall()
-        engine.releaseReference(identifier)
+        do {
+            try engine.withEngineEntry(drainJobs: false) {
+                engine.releaseReference(identifier)
+            }
+        } catch {
+            assertionFailure("Reference release unexpectedly failed: \(error)")
+        }
     }
 
     internal var retainedReferenceCountForTesting: Int {
@@ -132,7 +147,7 @@ public actor JavaScriptRuntime {
     }
 
     internal var bindingDescriptionsForTesting: [BindingDescription] {
-        engine.swiftBindings.values.compactMap(\.invocation?.description)
+        engine.swiftBindings.values.compactMap(\.function?.description)
     }
 
     internal func isBindingActive(_ identifier: UInt64) -> Bool {
@@ -143,7 +158,7 @@ public actor JavaScriptRuntime {
         _ identifier: UInt64,
         cancellingInFlight: Bool
     ) throws -> Bool {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try engine.removeBinding(
                 identifier,
                 cancellingInFlight: cancellingInFlight

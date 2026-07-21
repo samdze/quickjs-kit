@@ -3,11 +3,11 @@ import Testing
 
 @Suite("Scoped runtime execution")
 struct ExecutionExamplesTests {
-    @Test("perform batches synchronous typed evaluations")
-    func performBatchesSynchronousEvaluation() async throws {
+    @Test("run batches synchronous typed evaluations")
+    func runBatchesSynchronousEvaluation() async throws {
         let runtime = try JavaScriptRuntime()
 
-        let result = try await runtime.perform { runtime in
+        let result = try await runtime.run { runtime in
             let first: Int = try runtime.evaluate("Promise.resolve(20)")
             let second: Int = try runtime.evaluate("22")
             return first + second
@@ -16,11 +16,11 @@ struct ExecutionExamplesTests {
         #expect(result == 42)
     }
 
-    @Test("perform supports asynchronous runtime operations")
-    func performSupportsAsynchronousOperations() async throws {
+    @Test("run supports asynchronous runtime operations")
+    func runSupportsAsynchronousOperations() async throws {
         let runtime = try JavaScriptRuntime()
 
-        let result = try await runtime.perform { runtime in
+        let result = try await runtime.run { runtime in
             let first: Int = try await runtime.evaluate("Promise.resolve(20)")
             let second: Int = try await runtime.evaluate("Promise.resolve(22)")
             return first + second
@@ -34,7 +34,7 @@ struct ExecutionExamplesTests {
         let runtime = try JavaScriptRuntime()
 
         do {
-            try await runtime.perform { runtime in
+            try await runtime.run { runtime in
                 let _: Int = try runtime.evaluate("new Promise(() => {})")
             }
             Issue.record("Expected synchronous evaluation to require suspension.")

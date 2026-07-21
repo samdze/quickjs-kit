@@ -1,5 +1,21 @@
 internal import CQuickJS
 
+internal final class RegisteredSwiftModule {
+    internal let specifier: String
+    internal let exports: [String: ManagedQuickJSValue]
+    internal let bindingIdentifiers: [UInt64]
+
+    internal init(
+        specifier: String,
+        exports: [String: ManagedQuickJSValue],
+        bindingIdentifiers: [UInt64]
+    ) {
+        self.specifier = specifier
+        self.exports = exports
+        self.bindingIdentifiers = bindingIdentifiers
+    }
+}
+
 internal enum EngineModuleDiscovery {
     case ready
     case missing(JavaScriptModuleRequest)
@@ -8,7 +24,8 @@ internal enum EngineModuleDiscovery {
 extension QuickJSEngine {
     internal func registerSwiftModule(
         specifier: String,
-        members: [JavaScriptExportMemberDefinition]
+        members: [JavaScriptExportMemberDefinition],
+        settle: @escaping BindingSettlement
     ) throws {
         try validateModuleSpecifier(specifier)
         guard !hasModuleSource(specifier) else {
@@ -34,29 +51,32 @@ extension QuickJSEngine {
                 switch member.storage {
                 case let .value(encode):
                     exports[member.name] = try encode(self)
-                case let .function(draft):
+                case let .liveValue(value):
+                    exports[member.name] = try materialize(value)
+                case let .function(definition):
                     let identifier = try allocateBindingIdentifier()
-                    let invocation = draft.finalize(
+                    let boundFunction = definition.bind(
                         location: .module(specifier: specifier),
-                        order: UInt64(order)
+                        order: UInt64(order),
+                        settle: settle
                     )
-                    let binding = RegisteredSwiftBinding(
+                    let binding = RegisteredBinding(
                         identifier: identifier,
                         name: member.name,
-                        invocation: invocation
+                        function: boundFunction
                     )
                     swiftBindings[identifier] = binding
                     bindingIdentifiers.append(identifier)
-                    let function = try makeBoundFunction(
+                    let rawFunction = try makeBoundFunction(
                         bindingIdentifier: identifier,
                         name: member.name,
-                        length: invocation.description.parameters.count
+                        length: boundFunction.description.parameters.count
                     )
                     binding.exposedValue = ManagedQuickJSValue(
-                        JS_DupValue(context, function.raw),
+                        JS_DupValue(context, rawFunction.raw),
                         in: context
                     )
-                    exports[member.name] = function
+                    exports[member.name] = rawFunction
                 }
             }
 
@@ -196,29 +216,23 @@ extension QuickJSEngine {
         return .ready
     }
 
-    internal func loadModule(
-        _ specifier: String,
-        options: JavaScriptExecutionOptions
-    ) throws -> ManagedQuickJSValue {
-        try withExecution(options: options, sourceURL: moduleSources[specifier]?.sourceURL) {
-            moduleCompilationStarted = true
-            let raw = specifier.withCString { pointer in
-                JS_LoadModule(context, "<QuickJSKit import>", pointer)
-            }
-            let result = ManagedQuickJSValue(raw, in: context)
-            if JS_IsException(raw) != 0 {
-                let error = extractException(sourceURL: moduleSources[specifier]?.sourceURL)
-                throw JavaScriptError(
-                    kind: error.kind == .syntax ? .syntax : .module,
-                    name: error.name,
-                    message: error.message,
-                    stack: error.stack,
-                    sourceURL: error.sourceURL
-                )
-            }
-            markPromiseObserved(result)
-            return result
+    internal func loadModule(_ specifier: String) throws -> ManagedQuickJSValue {
+        moduleCompilationStarted = true
+        let raw = specifier.withCString { pointer in
+            JS_LoadModule(context, "<QuickJSKit import>", pointer)
         }
+        let result = ManagedQuickJSValue(raw, in: context)
+        if JS_IsException(raw) != 0 {
+            let error = extractException(sourceURL: moduleSources[specifier]?.sourceURL)
+            throw JavaScriptError(
+                kind: error.kind == .syntax ? .syntax : .module,
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+                sourceURL: error.sourceURL
+            )
+        }
+        return result
     }
 
     internal func allocateTransientModuleSpecifier() -> String {
@@ -375,7 +389,7 @@ internal let quickJSKitModuleNormalizer: @convention(c) (
     UnsafeMutableRawPointer?
 ) -> UnsafeMutablePointer<CChar>? = { context, base, requested, opaque in
     guard let context, let requested, let opaque else { return nil }
-    let bridge = Unmanaged<QuickJSCallbackBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let bridge = Unmanaged<QuickJSRuntimeBridge>.fromOpaque(opaque).takeUnretainedValue()
     guard let engine = bridge.engine,
           let normalized = engine.normalizeModule(
             base: base.map(String.init(cString:)) ?? "",
@@ -398,7 +412,7 @@ internal let quickJSKitModuleLoader: @convention(c) (
     UnsafeMutableRawPointer?
 ) -> OpaquePointer? = { _, name, opaque in
     guard let name, let opaque else { return nil }
-    let bridge = Unmanaged<QuickJSCallbackBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let bridge = Unmanaged<QuickJSRuntimeBridge>.fromOpaque(opaque).takeUnretainedValue()
     return bridge.engine?.compileModuleForLoader(String(cString: name))
 }
 
@@ -411,6 +425,6 @@ internal let quickJSKitSwiftModuleInitializer: @convention(c) (
           let opaque = JS_GetRuntimeOpaque(runtime) else {
         return -1
     }
-    let bridge = Unmanaged<QuickJSCallbackBridge>.fromOpaque(opaque).takeUnretainedValue()
+    let bridge = Unmanaged<QuickJSRuntimeBridge>.fromOpaque(opaque).takeUnretainedValue()
     return bridge.engine?.initializeSwiftModule(module) ?? -1
 }

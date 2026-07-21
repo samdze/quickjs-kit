@@ -104,8 +104,8 @@ struct PromiseExamplesTests {
         }
     }
 
-    @Test("cancelling a direct Swift promise wait cancels the shared producer")
-    func cancellationPropagatesToSwiftProducer() async throws {
+    @Test("cancelling one Swift promise waiter preserves the shared producer")
+    func cancellationRemainsLocalToWaiter() async throws {
         let runtime = try JavaScriptRuntime()
         let gate = Gate()
         try await runtime.function("slow") { () async throws -> Int in
@@ -122,8 +122,8 @@ struct PromiseExamplesTests {
         first.cancel()
 
         await #expect(throws: CancellationError.self) { _ = try await first.value }
-        await #expect(throws: JavaScriptError.self) { _ = try await second.value }
         await gate.open()
+        #expect(try await second.value == 42)
     }
 
     @Test("non-cancelling removal lets an active call finish")

@@ -1,5 +1,9 @@
 internal import CQuickJS
 
+internal final class QuickJSRuntimeBridge {
+    internal weak var engine: QuickJSEngine?
+}
+
 internal struct RegisteredJavaScriptReference {
     internal let identifier: UInt64
     internal let kind: JavaScriptReferenceKind
@@ -13,22 +17,6 @@ internal enum EngineJavaScriptValue {
 internal struct EngineModuleSource {
     internal let source: String
     internal let sourceURL: String
-}
-
-internal final class RegisteredSwiftModule {
-    internal let specifier: String
-    internal let exports: [String: ManagedQuickJSValue]
-    internal let bindingIdentifiers: [UInt64]
-
-    internal init(
-        specifier: String,
-        exports: [String: ManagedQuickJSValue],
-        bindingIdentifiers: [UInt64]
-    ) {
-        self.specifier = specifier
-        self.exports = exports
-        self.bindingIdentifiers = bindingIdentifiers
-    }
 }
 
 /// The only layer permitted to manipulate QuickJS pointers and owned values.
@@ -49,14 +37,17 @@ internal final class QuickJSEngine {
     internal let context: OpaquePointer
     internal let maximumJavaScriptStackSize: Int
 
-    private let callbackBridge: QuickJSCallbackBridge
+    private let callbackBridge: QuickJSRuntimeBridge
 
+    // Live values
     private var nextReferenceIdentifier: UInt64 = 1
     private var references: [UInt64: StoredQuickJSValue] = [:]
     private var identifiersByObjectAddress: [UInt: UInt64] = [:]
+
+    // Bindings and promises
     internal var nextBindingIdentifier: UInt64 = 1
     internal var nextOperationIdentifier: UInt64 = 1
-    internal var swiftBindings: [UInt64: RegisteredSwiftBinding] = [:]
+    internal var swiftBindings: [UInt64: RegisteredBinding] = [:]
     internal var currentGlobalBindings: [String: UInt64] = [:]
     internal var pendingSwiftPromises: [UInt64: PendingSwiftPromise] = [:]
     internal var nextHostWaiterIdentifier: UInt64 = 1
@@ -67,11 +58,14 @@ internal final class QuickJSEngine {
     internal var callbackDepth = 0
     internal var interruptHandler: (@Sendable () -> Bool)?
 
+    // Execution
     private let defaultExecutionTimeout: Duration?
     private var executionDepth = 0
     private var activeExecution: ActiveExecution?
     internal var stackTopRefreshCountForTesting = 0
     internal var checkpointCountForTesting = 0
+
+    // Modules
     internal var moduleSources: [String: EngineModuleSource] = [:]
     internal var nativeModuleSpecifiers: Set<String> = []
     internal var moduleResolver: (@Sendable (JavaScriptModuleRequest) throws -> String)?
@@ -110,7 +104,7 @@ internal final class QuickJSEngine {
             )
         }
 
-        let callbackBridge = QuickJSCallbackBridge()
+        let callbackBridge = QuickJSRuntimeBridge()
         self.runtime = runtime
         self.context = context
         self.maximumJavaScriptStackSize = maximumStackSize ?? Int(JS_DEFAULT_STACK_SIZE)
@@ -156,7 +150,6 @@ internal final class QuickJSEngine {
     internal var retainedReferenceCount: Int { references.count }
 
     internal func memoryUsage(allocationLimit: UInt64?) -> JavaScriptMemoryUsage {
-        prepareForEngineCall()
         var usage = JSMemoryUsage()
         JS_ComputeMemoryUsage(runtime, &usage)
         return JavaScriptMemoryUsage(
@@ -167,22 +160,13 @@ internal final class QuickJSEngine {
     }
 
     internal func collectGarbage() {
-        prepareForEngineCall()
         JS_RunGC(runtime)
     }
 
-    internal func prepareForEngineCall() {
-        // Swift actors serialize access but do not provide OS-thread affinity.
-        // A callback is nested inside an already prepared QuickJS entry. Moving
-        // the stack top deeper while JavaScript frames are active corrupts the
-        // engine's overflow baseline.
-        if callbackDepth == 0, executionDepth == 0 { JS_UpdateStackTop(runtime) }
-    }
-
-    internal func withExecution<Result>(
-        options: JavaScriptExecutionOptions,
+    internal func withEngineEntry<Result>(
+        options: JavaScriptExecutionOptions = .init(),
         sourceURL: String? = nil,
-        checkpoint: Bool = true,
+        drainJobs: Bool = true,
         _ operation: () throws -> Result
     ) throws -> Result {
         guard executionDepth == 0 else { return try operation() }
@@ -211,15 +195,15 @@ internal final class QuickJSEngine {
 
         do {
             let result = try operation()
-            if checkpoint { try drainPendingJobs() }
+            if drainJobs { try drainPendingJobs() }
             if let reason = activeExecution?.interruptionReason {
-                throw interruptionError(reason, sourceURL: sourceURL)
+                throw interruptionError(reason)
             }
             return result
         } catch {
             if let reason = activeExecution?.interruptionReason {
                 clearPendingException()
-                throw interruptionError(reason, sourceURL: sourceURL)
+                throw interruptionError(reason)
             }
             throw error
         }
@@ -242,26 +226,24 @@ internal final class QuickJSEngine {
         return false
     }
 
-    private func interruptionError(
-        _ reason: InterruptionReason,
-        sourceURL: String?
-    ) -> JavaScriptError {
+    private func interruptionError(_ reason: InterruptionReason) -> JavaScriptError {
+        let sourceURL = activeExecution?.sourceURL
         switch reason {
         case .cancelled:
-            JavaScriptError(
+            return JavaScriptError(
                 kind: .cancelled,
                 name: "CancellationError",
                 message: "JavaScript execution was cancelled.",
                 sourceURL: sourceURL
             )
         case .timeout:
-            JavaScriptError(
+            return JavaScriptError(
                 kind: .timeout,
                 message: "JavaScript execution exceeded its deadline.",
                 sourceURL: sourceURL
             )
         case .custom:
-            JavaScriptError(
+            return JavaScriptError(
                 kind: .interrupted,
                 message: "JavaScript execution was interrupted by the host.",
                 sourceURL: sourceURL
@@ -269,19 +251,10 @@ internal final class QuickJSEngine {
         }
     }
 
-    internal func evaluate(
-        _ source: String,
-        sourceURL: String
-    ) throws -> EngineJavaScriptValue {
-        let result = try evaluateRaw(source, sourceURL: sourceURL)
-        return try decodeUntyped(result, sourceURL: sourceURL)
-    }
-
     internal func evaluateRaw(
         _ source: String,
         sourceURL: String
     ) throws -> ManagedQuickJSValue {
-        prepareForEngineCall()
         let sourceByteCount = source.utf8.count
         let rawResult = source.withCString { sourcePointer in
             sourceURL.withCString { sourceURLPointer in
@@ -539,8 +512,7 @@ internal final class ManagedQuickJSValue {
 }
 
 private final class StoredQuickJSValue {
-    fileprivate let raw: JSValue
-    fileprivate let context: OpaquePointer
+    fileprivate let value: ManagedQuickJSValue
     fileprivate let objectAddress: UInt
     fileprivate let kind: JavaScriptReferenceKind
     fileprivate let isPromise: Bool
@@ -553,12 +525,11 @@ private final class StoredQuickJSValue {
         kind: JavaScriptReferenceKind,
         isPromise: Bool
     ) {
-        self.raw = raw
-        self.context = context
+        self.value = ManagedQuickJSValue(raw, in: context)
         self.objectAddress = objectAddress
         self.kind = kind
         self.isPromise = isPromise
     }
 
-    deinit { JS_FreeValue(context, raw) }
+    fileprivate var raw: JSValue { value.raw }
 }

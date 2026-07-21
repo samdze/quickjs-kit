@@ -93,22 +93,6 @@ struct ModuleExamplesTests {
         #expect(answer == 42)
     }
 
-    @Test("perform imports an immediately settled module synchronously")
-    func performImportsModuleSynchronously() async throws {
-        let runtime = try JavaScriptRuntime()
-        try await runtime.registerModule("export const answer = 42;", as: "answer")
-
-        let answer = try await runtime.perform { runtime in
-            let module = try runtime.importModule("answer")
-            return try runtime.evaluate(
-                "globalThis.answerNamespace = undefined; 42",
-                as: Int.self
-            ) + (module.specifier == "answer" ? 0 : 1)
-        }
-
-        #expect(answer == 42)
-    }
-
     @Test("repeated imports preserve module and namespace identity")
     func repeatedImportsPreserveIdentity() async throws {
         let runtime = try JavaScriptRuntime()

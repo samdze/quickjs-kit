@@ -3,7 +3,7 @@ extension JavaScriptRuntime {
         _ value: T,
         maximumNestingDepth: Int
     ) throws -> JavaScriptValue {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             let raw = try engine.encode(value, maximumNestingDepth: maximumNestingDepth)
             return try makeValue(engine.decodeUntyped(raw))
         }
@@ -14,26 +14,20 @@ extension JavaScriptRuntime {
         from value: JavaScriptValue,
         maximumNestingDepth: Int
     ) async throws -> T {
-        let raw = try engine.withExecution(options: .init()) {
-            try validate(value)
-            let raw = try engine.materialize(value)
-            engine.markPromiseObserved(raw)
-            return raw
-        }
-        return try await decodeAwaitingPromise(
+        try await decodeRoot(
             type,
-            from: raw,
-            maximumNestingDepth: maximumNestingDepth,
-            alreadyObserved: true,
-            jobsAlreadyDrained: true
-        )
+            maximumNestingDepth: maximumNestingDepth
+        ) {
+            try validate(value)
+            return try engine.materialize(value)
+        }
     }
 
     internal func value(
         forProperty name: String,
         on reference: JavaScriptReference
     ) throws -> JavaScriptValue {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference)
             return try makeValue(
                 engine.propertyValue(named: name, on: reference.identifier)
@@ -46,19 +40,13 @@ extension JavaScriptRuntime {
         on reference: JavaScriptReference,
         as type: T.Type
     ) async throws -> T {
-        let raw = try engine.withExecution(options: .init()) {
-            try validate(reference)
-            let raw = try engine.rawPropertyValue(named: name, on: reference.identifier)
-            engine.markPromiseObserved(raw)
-            return raw
-        }
-        return try await decodeAwaitingPromise(
+        try await decodeRoot(
             type,
-            from: raw,
-            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
-            alreadyObserved: true,
-            jobsAlreadyDrained: true
-        )
+            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
+        ) {
+            try validate(reference)
+            return try engine.rawPropertyValue(named: name, on: reference.identifier)
+        }
     }
 
     internal func set<T: Encodable & Sendable>(
@@ -66,7 +54,7 @@ extension JavaScriptRuntime {
         forProperty name: String,
         on reference: JavaScriptReference
     ) throws {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference)
             let raw = try engine.encode(
                 value,
@@ -81,7 +69,7 @@ extension JavaScriptRuntime {
         forProperty name: String,
         on reference: JavaScriptReference
     ) throws {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference)
             try validate(value)
             let raw = try engine.materialize(value)
@@ -90,7 +78,7 @@ extension JavaScriptRuntime {
     }
 
     internal func hasProperty(_ name: String, on reference: JavaScriptReference) throws -> Bool {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference)
             return try engine.hasProperty(named: name, on: reference.identifier)
         }
@@ -100,28 +88,28 @@ extension JavaScriptRuntime {
         _ name: String,
         on reference: JavaScriptReference
     ) throws -> Bool {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference)
             return try engine.deleteProperty(named: name, on: reference.identifier)
         }
     }
 
     internal func propertyNames(of reference: JavaScriptReference) throws -> [String] {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference)
             return try engine.ownEnumerablePropertyNames(of: reference.identifier)
         }
     }
 
     internal func arrayCount(_ reference: JavaScriptReference) throws -> Int {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference, expected: .array)
             return try engine.arrayLength(reference.identifier)
         }
     }
 
     internal func value(at index: Int, in reference: JavaScriptReference) throws -> JavaScriptValue {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference, expected: .array)
             return try makeValue(engine.arrayValue(at: index, in: reference.identifier))
         }
@@ -132,19 +120,13 @@ extension JavaScriptRuntime {
         in reference: JavaScriptReference,
         as type: T.Type
     ) async throws -> T {
-        let raw = try engine.withExecution(options: .init()) {
-            try validate(reference, expected: .array)
-            let raw = try engine.rawArrayValue(at: index, in: reference.identifier)
-            engine.markPromiseObserved(raw)
-            return raw
-        }
-        return try await decodeAwaitingPromise(
+        try await decodeRoot(
             type,
-            from: raw,
-            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
-            alreadyObserved: true,
-            jobsAlreadyDrained: true
-        )
+            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
+        ) {
+            try validate(reference, expected: .array)
+            return try engine.rawArrayValue(at: index, in: reference.identifier)
+        }
     }
 
     internal func set<T: Encodable & Sendable>(
@@ -152,7 +134,7 @@ extension JavaScriptRuntime {
         at index: Int,
         in reference: JavaScriptReference
     ) throws {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference, expected: .array)
             let raw = try engine.encode(
                 value,
@@ -167,7 +149,7 @@ extension JavaScriptRuntime {
         at index: Int,
         in reference: JavaScriptReference
     ) throws {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference, expected: .array)
             try validate(value)
             let raw = try engine.materialize(value)
@@ -179,7 +161,7 @@ extension JavaScriptRuntime {
         _ value: T,
         to reference: JavaScriptReference
     ) throws {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference, expected: .array)
             let index = try engine.arrayLength(reference.identifier)
             let raw = try engine.encode(
@@ -191,7 +173,7 @@ extension JavaScriptRuntime {
     }
 
     internal func append(_ value: JavaScriptValue, to reference: JavaScriptReference) throws {
-        try engine.withExecution(options: .init()) {
+        try engine.withEngineEntry() {
             try validate(reference, expected: .array)
             try validate(value)
             let index = try engine.arrayLength(reference.identifier)

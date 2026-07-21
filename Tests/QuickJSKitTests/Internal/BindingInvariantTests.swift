@@ -127,12 +127,120 @@ struct BindingInvariantTests {
         #expect(await runtime.checkpointCountForTesting == initialCheckpoints + 1)
     }
 
+    @Test("a typed root read owns one engine entry and checkpoint")
+    func typedRootReadHasOneEntryAndCheckpoint() async throws {
+        let runtime = try JavaScriptRuntime()
+        let initialRefreshes = await runtime.stackTopRefreshCountForTesting
+        let initialCheckpoints = await runtime.checkpointCountForTesting
+
+        let answer: Int = try await runtime.evaluate("Promise.resolve(42)")
+
+        #expect(answer == 42)
+        #expect(await runtime.stackTopRefreshCountForTesting == initialRefreshes + 1)
+        #expect(await runtime.checkpointCountForTesting == initialCheckpoints + 1)
+    }
+
+    @Test("one reusable async definition installs into independent runtimes")
+    func reusableDefinitionInstallsIntoIndependentRuntimes() async throws {
+        var builder = JavaScriptExportBuilder()
+        builder.function("increment") { (value: Int) async -> Int in
+            await Task.yield()
+            return value + 1
+        }
+        let definition = try #require(builder.members.first)
+        let first = try JavaScriptRuntime()
+        let second = try JavaScriptRuntime()
+
+        _ = try await first.registerGlobalFunction(definition)
+        _ = try await second.registerGlobalFunction(definition)
+
+        async let firstResult: Int = first.evaluate("increment(20)")
+        async let secondResult: Int = second.evaluate("increment(41)")
+        #expect(try await [firstResult, secondResult] == [21, 42])
+
+        let firstDescription = try #require(await first.bindingDescriptionsForTesting.first)
+        let secondDescription = try #require(await second.bindingDescriptionsForTesting.first)
+        #expect(firstDescription == secondDescription)
+    }
+
+    @Test("removing one reusable binding instance leaves another runtime independent")
+    func reusableDefinitionInstancesHaveIndependentLifecycles() async throws {
+        let gate = MultiRuntimeGate(expectedEntrants: 2)
+        var builder = JavaScriptExportBuilder()
+        builder.function("increment") { (value: Int) async -> Int in
+            await gate.wait()
+            return value + 1
+        }
+        let definition = try #require(builder.members.first)
+        let first = try JavaScriptRuntime()
+        let second = try JavaScriptRuntime()
+        let firstBinding = try await first.registerGlobalFunction(definition)
+        _ = try await second.registerGlobalFunction(definition)
+        let firstResult = Task { try await first.evaluate("increment(20)", as: Int.self) }
+        let secondResult = Task { try await second.evaluate("increment(41)", as: Int.self) }
+        await gate.waitUntilReady()
+
+        try await firstBinding.remove(cancellingInFlight: true)
+
+        await #expect(throws: JavaScriptError.self) { _ = try await firstResult.value }
+        await gate.open()
+        #expect(try await secondResult.value == 42)
+    }
+
+    @Test("binding descriptions preserve exact Swift closure effects")
+    func descriptionsPreserveClosureEffects() async throws {
+        let runtime = try JavaScriptRuntime()
+        try await runtime.function("sync") { () -> Int in 1 }
+        try await runtime.function("throwing") { () throws -> Int in 2 }
+        try await runtime.function("async") { () async -> Int in 3 }
+        try await runtime.function("asyncThrowing") { () async throws -> Int in 4 }
+
+        let descriptions = await runtime.bindingDescriptionsForTesting
+        let effects = Dictionary(uniqueKeysWithValues: descriptions.map {
+            ($0.name, $0.effects)
+        })
+        #expect(effects["sync"] == .init(isAsync: false, isThrowing: false))
+        #expect(effects["throwing"] == .init(isAsync: false, isThrowing: true))
+        #expect(effects["async"] == .init(isAsync: true, isThrowing: false))
+        #expect(effects["asyncThrowing"] == .init(isAsync: true, isThrowing: true))
+    }
+
     private struct Model: Codable, Sendable {
         let id: Int
     }
 
     private actor ExportRoot {
         func value() -> Int { 42 }
+    }
+
+    private actor MultiRuntimeGate {
+        private let expectedEntrants: Int
+        private var entrantCount = 0
+        private var releaseContinuations: [CheckedContinuation<Void, Never>] = []
+        private var readinessContinuations: [CheckedContinuation<Void, Never>] = []
+
+        init(expectedEntrants: Int) {
+            self.expectedEntrants = expectedEntrants
+        }
+
+        func wait() async {
+            entrantCount += 1
+            if entrantCount == expectedEntrants {
+                for continuation in readinessContinuations { continuation.resume() }
+                readinessContinuations.removeAll()
+            }
+            await withCheckedContinuation { releaseContinuations.append($0) }
+        }
+
+        func waitUntilReady() async {
+            guard entrantCount < expectedEntrants else { return }
+            await withCheckedContinuation { readinessContinuations.append($0) }
+        }
+
+        func open() {
+            for continuation in releaseContinuations { continuation.resume() }
+            releaseContinuations.removeAll()
+        }
     }
 
     private final class WeakBox<Value: AnyObject> {

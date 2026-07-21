@@ -1,154 +1,167 @@
 extension JavaScriptRuntime {
-    internal func decodeAwaitingPromise<T: Decodable & Sendable>(
+    internal func decodeRoot<T: Decodable & Sendable>(
         _ type: T.Type,
-        from raw: ManagedQuickJSValue,
         maximumNestingDepth: Int,
         sourceURL: String? = nil,
-        alreadyObserved: Bool = false,
-        jobsAlreadyDrained: Bool = false,
-        options: JavaScriptExecutionOptions = .init()
+        options: JavaScriptExecutionOptions = .init(),
+        produce: () throws -> ManagedQuickJSValue
     ) async throws -> T {
-        if !alreadyObserved { engine.markPromiseObserved(raw) }
-        defer { engine.unmarkPromiseObserved(raw) }
-        if !jobsAlreadyDrained { try engine.drainPendingJobs() }
-        guard let state = engine.promiseState(of: raw) else {
-            return try decodeValue(
+        try await readRoot(
+            sourceURL: sourceURL,
+            options: options,
+            produce: produce
+        ) { value in
+            try self.engine.decode(
                 type,
-                from: raw,
-                maximumNestingDepth: maximumNestingDepth,
-                sourceURL: sourceURL,
-                options: options
-            )
-        }
-        if state == 1 {
-            let result = engine.promiseResult(of: raw)
-            return try decodeValue(
-                type,
-                from: result,
-                maximumNestingDepth: maximumNestingDepth,
-                sourceURL: sourceURL,
-                options: options
-            )
-        }
-        if state == 2 {
-            throw engine.errorFromRejectedPromise(raw).withSourceURL(sourceURL)
-        }
-
-        let waiterIdentifier = engine.allocateHostWaiterIdentifier()
-        let producer = engine.producerOperationIdentifier(for: raw)
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                let waiter = HostPromiseWaiter(
-                    promise: raw,
-                    producerOperationIdentifier: producer,
-                    poll: { engine, promise in
-                        guard let state = engine.promiseState(of: promise), state != 0 else {
-                            return false
-                        }
-                        if state == 2 {
-                            continuation.resume(
-                                throwing: engine.errorFromRejectedPromise(promise)
-                                    .withSourceURL(sourceURL)
-                            )
-                            return true
-                        }
-                        do {
-                            let result = engine.promiseResult(of: promise)
-                            continuation.resume(
-                                returning: try engine.withExecution(
-                                    options: options,
-                                    sourceURL: sourceURL
-                                ) {
-                                    try engine.decode(
-                                        type,
-                                        from: result,
-                                        maximumNestingDepth: maximumNestingDepth
-                                    )
-                                }
-                            )
-                        } catch {
-                            continuation.resume(throwing: error)
-                        }
-                        return true
-                    },
-                    cancel: {
-                        continuation.resume(throwing: CancellationError())
-                    }
-                )
-                engine.installHostPromiseWaiter(waiter, identifier: waiterIdentifier)
-            }
-        } onCancel: {
-            Task { await self.cancelHostPromiseWaiter(waiterIdentifier) }
-        }
-    }
-
-    internal func decodeImmediate<T: Decodable & Sendable>(
-        _ type: T.Type,
-        from raw: ManagedQuickJSValue,
-        maximumNestingDepth: Int,
-        sourceURL: String? = nil,
-        alreadyObserved: Bool = false,
-        jobsAlreadyDrained: Bool = false,
-        options: JavaScriptExecutionOptions = .init()
-    ) throws -> T {
-        if !alreadyObserved { engine.markPromiseObserved(raw) }
-        defer { engine.unmarkPromiseObserved(raw) }
-        if !jobsAlreadyDrained { try engine.drainPendingJobs() }
-        guard let state = engine.promiseState(of: raw) else {
-            return try decodeValue(
-                type,
-                from: raw,
-                maximumNestingDepth: maximumNestingDepth,
-                sourceURL: sourceURL,
-                options: options
-            )
-        }
-        if state == 1 {
-            return try decodeValue(
-                type,
-                from: engine.promiseResult(of: raw),
-                maximumNestingDepth: maximumNestingDepth,
-                sourceURL: sourceURL,
-                options: options
-            )
-        }
-        if state == 2 {
-            throw engine.errorFromRejectedPromise(raw).withSourceURL(sourceURL)
-        }
-        throw JavaScriptError(
-            kind: .wouldSuspend,
-            message: "The JavaScript result requires asynchronous progress.",
-            sourceURL: sourceURL
-        )
-    }
-
-    private func decodeValue<T: Decodable & Sendable>(
-        _ type: T.Type,
-        from raw: ManagedQuickJSValue,
-        maximumNestingDepth: Int,
-        sourceURL: String?,
-        options: JavaScriptExecutionOptions
-    ) throws -> T {
-        try engine.withExecution(options: options, sourceURL: sourceURL) {
-            try engine.decode(
-                type,
-                from: raw,
+                from: value,
                 maximumNestingDepth: maximumNestingDepth
             )
         }
     }
 
-    private func cancelHostPromiseWaiter(_ identifier: UInt64) {
-        do {
-            try engine.withExecution(options: .init()) {
-                engine.cancelHostPromiseWaiter(identifier)
-            }
-        } catch let error as JavaScriptError {
-            engine.unhandledRejectionHandler?(error)
-        } catch {
-            engine.unhandledRejectionHandler?(
-                JavaScriptError(kind: .internalFailure, message: String(describing: error))
+    internal func decodeRootImmediately<T: Decodable & Sendable>(
+        _ type: T.Type,
+        maximumNestingDepth: Int,
+        sourceURL: String? = nil,
+        options: JavaScriptExecutionOptions = .init(),
+        produce: () throws -> ManagedQuickJSValue
+    ) throws -> T {
+        try readRootImmediately(
+            sourceURL: sourceURL,
+            options: options,
+            produce: produce
+        ) { value in
+            try engine.decode(
+                type,
+                from: value,
+                maximumNestingDepth: maximumNestingDepth
             )
+        }
+    }
+
+    internal func readRoot<Result: Sendable>(
+        sourceURL: String? = nil,
+        options: JavaScriptExecutionOptions = .init(),
+        produce: () throws -> ManagedQuickJSValue,
+        transform: @escaping (ManagedQuickJSValue) throws -> Result
+    ) async throws -> Result {
+        let waiterIdentifier = engine.allocateHostWaiterIdentifier()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                do {
+                    try engine.withEngineEntry(
+                        options: options,
+                        sourceURL: sourceURL,
+                        drainJobs: false
+                    ) {
+                        let raw = try produce()
+                        engine.markPromiseObserved(raw)
+                        do {
+                            try engine.drainPendingJobs()
+                            guard let state = engine.promiseState(of: raw) else {
+                                let result = try transform(raw)
+                                engine.unmarkPromiseObserved(raw)
+                                continuation.resume(returning: result)
+                                return
+                            }
+                            if state == 1 {
+                                let result = try transform(engine.promiseResult(of: raw))
+                                engine.unmarkPromiseObserved(raw)
+                                continuation.resume(returning: result)
+                                return
+                            }
+                            if state == 2 {
+                                let error = engine.errorFromRejectedPromise(raw)
+                                    .withSourceURL(sourceURL)
+                                engine.unmarkPromiseObserved(raw)
+                                continuation.resume(throwing: error)
+                                return
+                            }
+
+                            let waiter = HostPromiseWaiter(
+                                promise: raw,
+                                poll: { engine, promise in
+                                    guard let state = engine.promiseState(of: promise),
+                                          state != 0 else {
+                                        return false
+                                    }
+                                    defer { engine.unmarkPromiseObserved(promise) }
+                                    if state == 2 {
+                                        continuation.resume(
+                                            throwing: engine.errorFromRejectedPromise(promise)
+                                                .withSourceURL(sourceURL)
+                                        )
+                                    } else {
+                                        do {
+                                            continuation.resume(
+                                                returning: try transform(
+                                                    engine.promiseResult(of: promise)
+                                                )
+                                            )
+                                        } catch {
+                                            continuation.resume(throwing: error)
+                                        }
+                                    }
+                                    return true
+                                },
+                                cancel: { engine in
+                                    engine.unmarkPromiseObserved(raw)
+                                    continuation.resume(throwing: CancellationError())
+                                }
+                            )
+                            engine.installHostPromiseWaiter(
+                                waiter,
+                                identifier: waiterIdentifier
+                            )
+                        } catch {
+                            engine.unmarkPromiseObserved(raw)
+                            throw error
+                        }
+                    }
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelRootWaiter(waiterIdentifier) }
+        }
+    }
+
+    internal func readRootImmediately<Result>(
+        sourceURL: String? = nil,
+        options: JavaScriptExecutionOptions = .init(),
+        produce: () throws -> ManagedQuickJSValue,
+        transform: (ManagedQuickJSValue) throws -> Result
+    ) throws -> Result {
+        try engine.withEngineEntry(
+            options: options,
+            sourceURL: sourceURL,
+            drainJobs: false
+        ) {
+            let raw = try produce()
+            engine.markPromiseObserved(raw)
+            defer { engine.unmarkPromiseObserved(raw) }
+            try engine.drainPendingJobs()
+            guard let state = engine.promiseState(of: raw) else {
+                return try transform(raw)
+            }
+            if state == 1 {
+                return try transform(engine.promiseResult(of: raw))
+            }
+            if state == 2 {
+                throw engine.errorFromRejectedPromise(raw).withSourceURL(sourceURL)
+            }
+            throw JavaScriptError(
+                kind: .wouldSuspend,
+                message: "The JavaScript result requires asynchronous progress.",
+                sourceURL: sourceURL
+            )
+        }
+    }
+
+    private func cancelRootWaiter(_ identifier: UInt64) {
+        reportEngineEntryFailure {
+            engine.cancelHostPromiseWaiter(identifier)
         }
     }
 }

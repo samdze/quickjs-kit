@@ -6,7 +6,7 @@ extension JavaScriptRuntime {
     ) throws -> JavaScriptValue
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable {
-        try engine.withExecution(options: options) {
+        try engine.withEngineEntry(options: options) {
             try validate(function, expected: .function)
             let arguments = try encodeArguments(repeat each arguments)
             return try makeValue(
@@ -28,25 +28,19 @@ extension JavaScriptRuntime {
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable,
           Result: Decodable & Sendable {
-        let raw = try engine.withExecution(options: options) {
+        try await decodeRoot(
+            type,
+            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
+            options: options
+        ) {
             try validate(function, expected: .function)
             let arguments = try encodeArguments(repeat each arguments)
-            let raw = try engine.callRaw(
+            return try engine.callRaw(
                 function.identifier,
                 receiverIdentifier: nil,
                 arguments: arguments
             )
-            engine.markPromiseObserved(raw)
-            return raw
         }
-        return try await decodeAwaitingPromise(
-            type,
-            from: raw,
-            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
-            alreadyObserved: true,
-            jobsAlreadyDrained: true,
-            options: options
-        )
     }
 
     internal func call<each Argument, Result>(
@@ -59,26 +53,20 @@ extension JavaScriptRuntime {
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable,
           Result: Decodable & Sendable {
-        let raw = try engine.withExecution(options: options) {
+        try await decodeRoot(
+            type,
+            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
+            options: options
+        ) {
             try validate(function, expected: .function)
             try validate(receiver)
             let arguments = try encodeArguments(repeat each arguments)
-            let raw = try engine.callRaw(
+            return try engine.callRaw(
                 function.identifier,
                 receiverIdentifier: receiver.identifier,
                 arguments: arguments
             )
-            engine.markPromiseObserved(raw)
-            return raw
         }
-        return try await decodeAwaitingPromise(
-            type,
-            from: raw,
-            maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth,
-            alreadyObserved: true,
-            jobsAlreadyDrained: true,
-            options: options
-        )
     }
 
     internal func call(
@@ -87,7 +75,7 @@ extension JavaScriptRuntime {
         receiver: JavaScriptReference?,
         options: JavaScriptExecutionOptions
     ) throws -> JavaScriptValue {
-        try engine.withExecution(options: options) {
+        try engine.withEngineEntry(options: options) {
             try validate(function, expected: .function)
             if let receiver { try validate(receiver) }
             for argument in arguments { try validate(argument) }

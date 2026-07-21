@@ -7,7 +7,6 @@ extension QuickJSEngine {
         from value: ManagedQuickJSValue,
         maximumNestingDepth: Int
     ) throws -> T {
-        prepareForEngineCall()
         guard maximumNestingDepth > 0 else {
             throw DecodingError.dataCorrupted(
                 .init(

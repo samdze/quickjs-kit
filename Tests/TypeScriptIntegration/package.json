@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

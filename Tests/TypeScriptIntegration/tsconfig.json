@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2024"
+  },
+  "include": [
+    "quickjskit.generated.d.ts",
+    "example.js",
+    "example.ts"
+  ]
+}

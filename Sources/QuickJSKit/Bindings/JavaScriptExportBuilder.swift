@@ -276,23 +276,20 @@ public struct JavaScriptExportBuilder {
         isThrowing: Bool,
         invocation: @escaping (QuickJSEngine, [ManagedQuickJSValue]) throws -> BindingInvocation
     ) {
-        let names = options.parameterNames ?? (0..<parameterShapes.count).map { "argument\($0)" }
-        var validationMessage = exportMemberValidationMessage(name)
-        if names.count != parameterShapes.count {
-            validationMessage = "The number of parameter names must match the Swift closure arity."
-        } else if Set(names).count != names.count || !names.allSatisfy(isConservativeIdentifier) {
-            validationMessage = "Parameter names must be unique valid JavaScript identifiers."
-        }
-        let description = BindingDescription(
-            location: .exportMember(exportName: ""),
+        let parameters = BindingValidation.parameterNames(
+            options.parameterNames,
+            arity: parameterShapes.count
+        )
+        let names = parameters.names
+        let validationMessage = parameters.message ?? exportMemberValidationMessage(name)
+        let draft = BindingDraft(
             name: name,
             parameters: zip(names, parameterShapes).map {
                 BindingParameterDescription(name: $0, type: $1)
             },
             result: resultShape,
             effects: .init(isAsync: isAsync, isThrowing: isThrowing),
-            documentation: options.documentation,
-            order: UInt64(members.count)
+            documentation: options.documentation
         )
         members.append(
             JavaScriptExportMemberDefinition(
@@ -300,44 +297,20 @@ public struct JavaScriptExportBuilder {
                 documentation: options.documentation,
                 validationMessage: validationMessage,
                 storage: .function(
-                    AnyBindingInvocation(description: description, invoke: invocation)
+                    AnyBindingDraft(draft: draft, invoke: invocation)
                 )
             )
         )
     }
 
     private func exportMemberValidationMessage(_ name: String) -> String? {
-        name.isEmpty || name.contains("\0")
-            ? "Export member names must be non-empty and contain no NUL characters."
-            : nil
+        BindingValidation.nameMessage(name, role: "Export member names")
     }
-
-    private func isConservativeIdentifier(_ name: String) -> Bool {
-        guard let first = name.unicodeScalars.first else { return false }
-        func isStart(_ scalar: Unicode.Scalar) -> Bool {
-            scalar == "_" || scalar == "$" ||
-                (65...90).contains(scalar.value) || (97...122).contains(scalar.value)
-        }
-        let hasValidScalars = isStart(first) && name.unicodeScalars.dropFirst().allSatisfy {
-            isStart($0) || (48...57).contains($0.value)
-        }
-        return hasValidScalars && !Self.reservedParameterNames.contains(name)
-    }
-
-    private static let reservedParameterNames: Set<String> = [
-        "await", "break", "case", "catch", "class", "const", "continue",
-        "debugger", "default", "delete", "do", "else", "enum", "export",
-        "extends", "false", "finally", "for", "function", "if", "import",
-        "in", "instanceof", "let", "new", "null", "return", "static",
-        "super", "switch", "this", "throw", "true", "try", "typeof",
-        "var", "void", "while", "with", "yield", "implements", "interface",
-        "package", "private", "protected", "public",
-    ]
 }
 
 internal struct JavaScriptExportMemberDefinition {
     internal enum Storage {
-        case function(AnyBindingInvocation)
+        case function(AnyBindingDraft)
         case value((QuickJSEngine) throws -> ManagedQuickJSValue)
     }
 
@@ -358,27 +331,25 @@ extension JavaScriptRuntime {
         as name: String,
         _ configure: @Sendable (Root, inout JavaScriptExportBuilder) -> Void
     ) throws -> JavaScriptBinding {
-        guard !name.isEmpty, !name.contains("\0") else {
-            throw JavaScriptError(
-                kind: .conversion,
-                message: "Export names must be non-empty and contain no NUL characters."
-            )
+        if let message = BindingValidation.nameMessage(name, role: "Export names") {
+            throw JavaScriptError(kind: .conversion, message: message)
         }
         var builder = JavaScriptExportBuilder(runtime: self)
         configure(root, &builder)
         if let message = builder.members.lazy.compactMap(\.validationMessage).first {
             throw JavaScriptError(kind: .conversion, message: message)
         }
-        let (identifier, rawValue) = try engine.registerExport(
-            named: name,
-            root: root,
-            members: builder.members
-        )
-        try engine.drainPendingJobs()
-        return JavaScriptBinding(
-            name: name,
-            value: makeValue(rawValue),
-            reference: JavaScriptBindingReference(runtime: self, identifier: identifier)
-        )
+        return try engine.withExecution(options: .init()) {
+            let (identifier, rawValue) = try engine.registerExport(
+                named: name,
+                root: root,
+                members: builder.members
+            )
+            return JavaScriptBinding(
+                name: name,
+                value: makeValue(rawValue),
+                reference: JavaScriptBindingReference(runtime: self, identifier: identifier)
+            )
+        }
     }
 }

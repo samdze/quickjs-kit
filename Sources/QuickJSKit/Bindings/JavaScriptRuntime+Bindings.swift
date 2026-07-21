@@ -233,32 +233,35 @@ extension JavaScriptRuntime {
         _ identifier: UInt64,
         value: T
     ) {
-        do {
-            let encoded = try engine.encode(
-                value,
-                maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
-            )
-            engine.settleSwiftPromise(identifier, with: .success(encoded))
-        } catch {
-            engine.settleSwiftPromise(identifier, with: .failure(error))
+        performAsyncSettlement {
+            do {
+                let encoded = try engine.encode(
+                    value,
+                    maximumNestingDepth: JavaScriptEncoder.defaultMaximumNestingDepth
+                )
+                engine.settleSwiftPromise(identifier, with: .success(encoded))
+            } catch {
+                engine.settleSwiftPromise(identifier, with: .failure(error))
+            }
         }
-        drainAfterAsyncSettlement()
     }
 
     internal func settleSwiftPromiseWithUndefined(_ identifier: UInt64) {
-        let value = ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
-        engine.settleSwiftPromise(identifier, with: .success(value))
-        drainAfterAsyncSettlement()
+        performAsyncSettlement {
+            let value = ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
+            engine.settleSwiftPromise(identifier, with: .success(value))
+        }
     }
 
     internal func settleSwiftPromise(_ identifier: UInt64, error: any Error) {
-        engine.settleSwiftPromise(identifier, with: .failure(error))
-        drainAfterAsyncSettlement()
+        performAsyncSettlement {
+            engine.settleSwiftPromise(identifier, with: .failure(error))
+        }
     }
 
-    private func drainAfterAsyncSettlement() {
+    private func performAsyncSettlement(_ operation: () throws -> Void) {
         do {
-            try engine.drainPendingJobs()
+            try engine.withExecution(options: .init(), operation)
         } catch let error as JavaScriptError {
             engine.unhandledRejectionHandler?(error)
         } catch {
@@ -319,89 +322,50 @@ extension JavaScriptRuntime {
         resultShape: BindingTypeShape,
         invocation: @escaping (QuickJSEngine, [ManagedQuickJSValue]) throws -> BindingInvocation
     ) throws -> JavaScriptBinding {
-        let parameterNames = try validatedParameterNames(
-            options.parameterNames,
-            arity: parameterShapes.count
-        )
-        let description = BindingDescription(
-            location: .global,
-            name: try validatedBindingName(name),
-            parameters: zip(parameterNames, parameterShapes).map {
-                BindingParameterDescription(name: $0, type: $1)
-            },
-            result: resultShape,
-            effects: .init(isAsync: isAsync, isThrowing: isThrowing),
-            documentation: options.documentation,
-            order: engine.nextBindingIdentifier
-        )
-        let (identifier, rawValue) = try engine.registerGlobalBinding(
-            named: name,
-            invocation: AnyBindingInvocation(description: description, invoke: invocation)
-        )
-        try engine.drainPendingJobs()
-        return JavaScriptBinding(
-            name: name,
-            value: makeValue(rawValue),
-            reference: JavaScriptBindingReference(runtime: self, identifier: identifier)
-        )
+        try engine.withExecution(options: .init()) {
+            let parameterNames = try validatedParameterNames(
+                options.parameterNames,
+                arity: parameterShapes.count
+            )
+            let draft = BindingDraft(
+                name: try validatedBindingName(name),
+                parameters: zip(parameterNames, parameterShapes).map {
+                    BindingParameterDescription(name: $0, type: $1)
+                },
+                result: resultShape,
+                effects: .init(isAsync: isAsync, isThrowing: isThrowing),
+                documentation: options.documentation
+            )
+            let binding = AnyBindingDraft(draft: draft, invoke: invocation).finalize(
+                location: .global,
+                order: engine.nextBindingIdentifier
+            )
+            let (identifier, rawValue) = try engine.registerGlobalBinding(
+                named: name,
+                invocation: binding
+            )
+            return JavaScriptBinding(
+                name: name,
+                value: makeValue(rawValue),
+                reference: JavaScriptBindingReference(runtime: self, identifier: identifier)
+            )
+        }
     }
 
     private func validatedBindingName(_ name: String) throws -> String {
-        guard !name.isEmpty, !name.contains("\0") else {
-            throw JavaScriptError(
-                kind: .conversion,
-                message: "Binding names must be non-empty and contain no NUL characters."
-            )
+        if let message = BindingValidation.nameMessage(name, role: "Binding names") {
+            throw JavaScriptError(kind: .conversion, message: message)
         }
         return name
     }
 
     private func validatedParameterNames(_ names: [String]?, arity: Int) throws -> [String] {
-        guard let names else { return (0..<arity).map { "argument\($0)" } }
-        guard names.count == arity else {
-            throw JavaScriptError(
-                kind: .conversion,
-                message: "The number of parameter names must match the Swift closure arity."
-            )
+        let validation = BindingValidation.parameterNames(names, arity: arity)
+        if let message = validation.message {
+            throw JavaScriptError(kind: .conversion, message: message)
         }
-        guard Set(names).count == names.count,
-              names.allSatisfy(isValidJavaScriptIdentifier) else {
-            throw JavaScriptError(
-                kind: .conversion,
-                message: "Parameter names must be unique valid JavaScript identifiers."
-            )
-        }
-        return names
+        return validation.names
     }
-
-    private func isValidJavaScriptIdentifier(_ name: String) -> Bool {
-        guard let first = name.unicodeScalars.first,
-              isIdentifierStart(first),
-              name.unicodeScalars.dropFirst().allSatisfy(isIdentifierContinue) else {
-            return false
-        }
-        return !Self.reservedParameterNames.contains(name)
-    }
-
-    private func isIdentifierStart(_ scalar: Unicode.Scalar) -> Bool {
-        scalar == "_" || scalar == "$" ||
-            (scalar.value >= 65 && scalar.value <= 90) ||
-            (scalar.value >= 97 && scalar.value <= 122)
-    }
-
-    private func isIdentifierContinue(_ scalar: Unicode.Scalar) -> Bool {
-        isIdentifierStart(scalar) || (scalar.value >= 48 && scalar.value <= 57)
-    }
-
-    private static let reservedParameterNames: Set<String> = [
-        "await", "break", "case", "catch", "class", "const", "continue",
-        "debugger", "default", "delete", "do", "else", "enum", "export",
-        "extends", "false", "finally", "for", "function", "if", "import",
-        "in", "instanceof", "let", "new", "null", "return", "static",
-        "super", "switch", "this", "throw", "true", "try", "typeof",
-        "var", "void", "while", "with", "yield", "implements", "interface",
-        "package", "private", "protected", "public",
-    ]
 }
 
 internal final class BindingArgumentDecoder {

@@ -23,7 +23,8 @@ internal struct BindingParameterDescription: Sendable, Hashable {
 internal struct BindingDescription: Sendable, Hashable {
     internal enum Location: Sendable, Hashable {
         case global
-        case exportMember(exportName: String)
+        case objectExport(name: String)
+        case module(specifier: String)
     }
 
     internal struct Effects: Sendable, Hashable {
@@ -38,6 +39,29 @@ internal struct BindingDescription: Sendable, Hashable {
     internal let effects: Effects
     internal let documentation: String?
     internal let order: UInt64
+}
+
+internal struct BindingDraft {
+    internal let name: String
+    internal let parameters: [BindingParameterDescription]
+    internal let result: BindingTypeShape
+    internal let effects: BindingDescription.Effects
+    internal let documentation: String?
+
+    internal func finalize(
+        location: BindingDescription.Location,
+        order: UInt64
+    ) -> BindingDescription {
+        BindingDescription(
+            location: location,
+            name: name,
+            parameters: parameters,
+            result: result,
+            effects: effects,
+            documentation: documentation,
+            order: order
+        )
+    }
 }
 
 internal protocol BindingTypeShapeProviding {

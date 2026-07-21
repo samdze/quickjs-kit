@@ -29,3 +29,22 @@ internal func quickJSObjectAddress(_ value: JSValue) -> UInt {
     UInt(bitPattern: value.u.ptr)
 #endif
 }
+
+internal func quickJSModulePointer(_ value: JSValue) -> OpaquePointer? {
+#if arch(i386) || arch(arm) || arch(arm64_32) || arch(wasm32)
+    OpaquePointer(bitPattern: UInt(truncatingIfNeeded: value))
+#else
+    OpaquePointer(value.u.ptr)
+#endif
+}
+
+internal func quickJSModuleValue(_ pointer: OpaquePointer) -> JSValue {
+#if arch(i386) || arch(arm) || arch(arm64_32) || arch(wasm32)
+    UInt64(UInt(bitPattern: pointer)) |
+        UInt64(UInt32(bitPattern: Int32(JS_TAG_MODULE))) << 32
+#else
+    var storage = JSValueUnion()
+    storage.ptr = UnsafeMutableRawPointer(pointer)
+    return JSValue(u: storage, tag: Int64(JS_TAG_MODULE))
+#endif
+}

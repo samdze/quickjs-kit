@@ -14,6 +14,21 @@ internal struct AnyBindingInvocation {
     internal let invoke: (QuickJSEngine, [ManagedQuickJSValue]) throws -> BindingInvocation
 }
 
+internal struct AnyBindingDraft {
+    internal let draft: BindingDraft
+    internal let invoke: (QuickJSEngine, [ManagedQuickJSValue]) throws -> BindingInvocation
+
+    internal func finalize(
+        location: BindingDescription.Location,
+        order: UInt64
+    ) -> AnyBindingInvocation {
+        AnyBindingInvocation(
+            description: draft.finalize(location: location, order: order),
+            invoke: invoke
+        )
+    }
+}
+
 internal final class RegisteredSwiftBinding {
     internal let identifier: UInt64
     internal let name: String
@@ -151,10 +166,7 @@ extension QuickJSEngine {
         members: [JavaScriptExportMemberDefinition]
     ) throws -> (UInt64, EngineJavaScriptValue) {
         prepareForEngineCall()
-        let duplicateNames = Dictionary(grouping: members, by: \.name)
-            .filter { $0.value.count > 1 }
-            .keys
-        guard duplicateNames.isEmpty else {
+        guard !BindingValidation.hasDuplicateNames(members.map(\.name)) else {
             throw JavaScriptError(
                 kind: .conversion,
                 message: "An export cannot contain duplicate member names."
@@ -176,24 +188,16 @@ extension QuickJSEngine {
             if JS_IsException(object.raw) != 0 { throw extractException() }
             for (memberOrder, member) in members.enumerated() {
                 switch member.storage {
-                case let .function(invocation):
+                case let .function(draft):
                     let childIdentifier = try allocateBindingIdentifier()
-                    let description = BindingDescription(
-                        location: .exportMember(exportName: name),
-                        name: invocation.description.name,
-                        parameters: invocation.description.parameters,
-                        result: invocation.description.result,
-                        effects: invocation.description.effects,
-                        documentation: invocation.description.documentation,
+                    let invocation = draft.finalize(
+                        location: .objectExport(name: name),
                         order: UInt64(memberOrder)
                     )
                     let child = RegisteredSwiftBinding(
                         identifier: childIdentifier,
                         name: member.name,
-                        invocation: AnyBindingInvocation(
-                            description: description,
-                            invoke: invocation.invoke
-                        ),
+                        invocation: invocation,
                         root: root
                     )
                     swiftBindings[childIdentifier] = child
@@ -201,7 +205,7 @@ extension QuickJSEngine {
                     let function = try makeBoundFunction(
                         bindingIdentifier: childIdentifier,
                         name: member.name,
-                        length: description.parameters.count
+                        length: invocation.description.parameters.count
                     )
                     child.exposedValue = ManagedQuickJSValue(
                         JS_DupValue(context, function.raw),
@@ -277,6 +281,7 @@ extension QuickJSEngine {
 
     internal func drainPendingJobs() throws {
         prepareForEngineCall()
+        checkpointCountForTesting += 1
         var jobContext: OpaquePointer?
         while true {
             let status = JS_ExecutePendingJob(runtime, &jobContext)
@@ -366,7 +371,6 @@ extension QuickJSEngine {
         waiter.cancel()
         if let producer = waiter.producerOperationIdentifier {
             cancelSwiftPromise(producer)
-            try? drainPendingJobs()
         }
     }
 
@@ -518,7 +522,7 @@ extension QuickJSEngine {
         swiftBindings.removeValue(forKey: binding.identifier)
     }
 
-    private func makeBoundFunction(
+    internal func makeBoundFunction(
         bindingIdentifier: UInt64,
         name: String,
         length: Int
@@ -545,7 +549,7 @@ extension QuickJSEngine {
         return function
     }
 
-    private func defineProperty(
+    internal func defineProperty(
         _ name: String,
         on object: JSValue,
         value: JSValue,
@@ -563,7 +567,7 @@ extension QuickJSEngine {
         guard status >= 0 else { throw extractException() }
     }
 
-    private func throwJavaScriptError(name: String, message: String) -> JSValue {
+    internal func throwJavaScriptError(name: String, message: String) -> JSValue {
         let error = makeJavaScriptError(name: name, message: message, swiftType: nil)
         return JS_Throw(context, JS_DupValue(context, error.raw))
     }
@@ -620,7 +624,7 @@ extension QuickJSEngine {
         return true
     }
 
-    private func allocateBindingIdentifier() throws -> UInt64 {
+    internal func allocateBindingIdentifier() throws -> UInt64 {
         guard nextBindingIdentifier <= Self.maximumBindingIdentifier else {
             throw JavaScriptError(kind: .resourceLimit, message: "The binding identifier space is exhausted.")
         }
@@ -679,4 +683,13 @@ internal let quickJSKitPromiseRejectionTracker: @convention(c) (
         reason: reason,
         isHandled: isHandled != 0
     )
+}
+
+internal let quickJSKitInterruptHandler: @convention(c) (
+    OpaquePointer?,
+    UnsafeMutableRawPointer?
+) -> Int32 = { _, opaque in
+    guard let opaque else { return 0 }
+    let bridge = Unmanaged<QuickJSCallbackBridge>.fromOpaque(opaque).takeUnretainedValue()
+    return bridge.engine?.shouldInterrupt() == true ? 1 : 0
 }

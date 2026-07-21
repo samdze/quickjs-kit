@@ -10,8 +10,41 @@ internal enum EngineJavaScriptValue {
     case reference(RegisteredJavaScriptReference)
 }
 
+internal struct EngineModuleSource {
+    internal let source: String
+    internal let sourceURL: String
+}
+
+internal final class RegisteredSwiftModule {
+    internal let specifier: String
+    internal let exports: [String: ManagedQuickJSValue]
+    internal let bindingIdentifiers: [UInt64]
+
+    internal init(
+        specifier: String,
+        exports: [String: ManagedQuickJSValue],
+        bindingIdentifiers: [UInt64]
+    ) {
+        self.specifier = specifier
+        self.exports = exports
+        self.bindingIdentifiers = bindingIdentifiers
+    }
+}
+
 /// The only layer permitted to manipulate QuickJS pointers and owned values.
 internal final class QuickJSEngine {
+    internal enum InterruptionReason {
+        case cancelled
+        case timeout
+        case custom
+    }
+
+    private struct ActiveExecution {
+        internal let deadline: ContinuousClock.Instant?
+        internal let sourceURL: String?
+        internal var interruptionReason: InterruptionReason?
+    }
+
     internal let runtime: OpaquePointer
     internal let context: OpaquePointer
     internal let maximumJavaScriptStackSize: Int
@@ -32,6 +65,22 @@ internal final class QuickJSEngine {
     internal var observedPromiseAddresses: [UInt: Int] = [:]
     internal var unhandledRejectionHandler: (@Sendable (JavaScriptError) -> Void)?
     internal var callbackDepth = 0
+    internal var interruptHandler: (@Sendable () -> Bool)?
+
+    private let defaultExecutionTimeout: Duration?
+    private var executionDepth = 0
+    private var activeExecution: ActiveExecution?
+    internal var stackTopRefreshCountForTesting = 0
+    internal var checkpointCountForTesting = 0
+    internal var moduleSources: [String: EngineModuleSource] = [:]
+    internal var nativeModuleSpecifiers: Set<String> = []
+    internal var moduleResolver: (@Sendable (JavaScriptModuleRequest) throws -> String)?
+    internal var missingModuleRequest: JavaScriptModuleRequest?
+    internal var normalizedModuleRequests: [String: JavaScriptModuleRequest] = [:]
+    internal var moduleCompilationStarted = false
+    internal var nextTransientModuleIdentifier: UInt64 = 1
+    internal var swiftModules: [UInt: RegisteredSwiftModule] = [:]
+    internal var preloadedModuleSpecifiers: Set<String> = []
 
     internal init(configuration: JavaScriptRuntime.Configuration) throws {
         let memoryLimit = try Self.platformSize(
@@ -65,6 +114,7 @@ internal final class QuickJSEngine {
         self.runtime = runtime
         self.context = context
         self.maximumJavaScriptStackSize = maximumStackSize ?? Int(JS_DEFAULT_STACK_SIZE)
+        self.defaultExecutionTimeout = configuration.defaultExecutionTimeout
         self.callbackBridge = callbackBridge
         callbackBridge.engine = self
         JS_SetRuntimeOpaque(
@@ -76,12 +126,26 @@ internal final class QuickJSEngine {
             quickJSKitPromiseRejectionTracker,
             Unmanaged.passUnretained(callbackBridge).toOpaque()
         )
+        JS_SetInterruptHandler(
+            runtime,
+            quickJSKitInterruptHandler,
+            Unmanaged.passUnretained(callbackBridge).toOpaque()
+        )
+        JS_SetModuleLoaderFunc(
+            runtime,
+            quickJSKitModuleNormalizer,
+            quickJSKitModuleLoader,
+            Unmanaged.passUnretained(callbackBridge).toOpaque()
+        )
     }
 
     deinit {
         JS_UpdateStackTop(runtime)
         JS_SetHostPromiseRejectionTracker(runtime, nil, nil)
+        JS_SetInterruptHandler(runtime, nil, nil)
+        JS_SetModuleLoaderFunc(runtime, nil, nil, nil)
         JS_SetRuntimeOpaque(runtime, nil)
+        swiftModules.removeAll()
         removeAllBindingsForTeardown()
         references.removeAll()
         identifiersByObjectAddress.removeAll()
@@ -91,12 +155,118 @@ internal final class QuickJSEngine {
 
     internal var retainedReferenceCount: Int { references.count }
 
+    internal func memoryUsage(allocationLimit: UInt64?) -> JavaScriptMemoryUsage {
+        prepareForEngineCall()
+        var usage = JSMemoryUsage()
+        JS_ComputeMemoryUsage(runtime, &usage)
+        return JavaScriptMemoryUsage(
+            allocatedBytes: UInt64(max(0, usage.malloc_size)),
+            allocationLimit: allocationLimit,
+            usedBytes: UInt64(max(0, usage.memory_used_size))
+        )
+    }
+
+    internal func collectGarbage() {
+        prepareForEngineCall()
+        JS_RunGC(runtime)
+    }
+
     internal func prepareForEngineCall() {
         // Swift actors serialize access but do not provide OS-thread affinity.
         // A callback is nested inside an already prepared QuickJS entry. Moving
         // the stack top deeper while JavaScript frames are active corrupts the
         // engine's overflow baseline.
-        if callbackDepth == 0 { JS_UpdateStackTop(runtime) }
+        if callbackDepth == 0, executionDepth == 0 { JS_UpdateStackTop(runtime) }
+    }
+
+    internal func withExecution<Result>(
+        options: JavaScriptExecutionOptions,
+        sourceURL: String? = nil,
+        checkpoint: Bool = true,
+        _ operation: () throws -> Result
+    ) throws -> Result {
+        guard executionDepth == 0 else { return try operation() }
+
+        JS_UpdateStackTop(runtime)
+        stackTopRefreshCountForTesting += 1
+        let timeout: Duration?
+        switch options.timeout {
+        case .runtimeDefault:
+            timeout = defaultExecutionTimeout
+        case .disabled:
+            timeout = nil
+        case let .after(duration):
+            timeout = duration
+        }
+        activeExecution = ActiveExecution(
+            deadline: timeout.map { ContinuousClock.now.advanced(by: $0) },
+            sourceURL: sourceURL,
+            interruptionReason: nil
+        )
+        executionDepth = 1
+        defer {
+            executionDepth = 0
+            activeExecution = nil
+        }
+
+        do {
+            let result = try operation()
+            if checkpoint { try drainPendingJobs() }
+            if let reason = activeExecution?.interruptionReason {
+                throw interruptionError(reason, sourceURL: sourceURL)
+            }
+            return result
+        } catch {
+            if let reason = activeExecution?.interruptionReason {
+                clearPendingException()
+                throw interruptionError(reason, sourceURL: sourceURL)
+            }
+            throw error
+        }
+    }
+
+    internal func shouldInterrupt() -> Bool {
+        guard activeExecution != nil else { return false }
+        if withUnsafeCurrentTask(body: { $0?.isCancelled == true }) {
+            activeExecution?.interruptionReason = .cancelled
+            return true
+        }
+        if let deadline = activeExecution?.deadline, ContinuousClock.now >= deadline {
+            activeExecution?.interruptionReason = .timeout
+            return true
+        }
+        if interruptHandler?() == true {
+            activeExecution?.interruptionReason = .custom
+            return true
+        }
+        return false
+    }
+
+    private func interruptionError(
+        _ reason: InterruptionReason,
+        sourceURL: String?
+    ) -> JavaScriptError {
+        switch reason {
+        case .cancelled:
+            JavaScriptError(
+                kind: .cancelled,
+                name: "CancellationError",
+                message: "JavaScript execution was cancelled.",
+                sourceURL: sourceURL
+            )
+        case .timeout:
+            JavaScriptError(
+                kind: .timeout,
+                message: "JavaScript execution exceeded its deadline.",
+                sourceURL: sourceURL
+            )
+        case .custom:
+            JavaScriptError(
+                kind: .interrupted,
+                message: "JavaScript execution was interrupted by the host.",
+                sourceURL: sourceURL
+            )
+        }
     }
 
     internal func evaluate(

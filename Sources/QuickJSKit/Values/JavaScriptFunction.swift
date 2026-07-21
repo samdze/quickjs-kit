@@ -14,20 +14,23 @@ public struct JavaScriptFunction: Sendable, Hashable {
 
     /// Calls the function with heterogeneous encodable arguments.
     public func call<each Argument>(
-        _ arguments: repeat each Argument
+        _ arguments: repeat each Argument,
+        options: JavaScriptExecutionOptions = .init()
     ) async throws -> JavaScriptValue
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable {
         try await reference.runtime.call(
             reference,
-            arguments: repeat each arguments
+            arguments: repeat each arguments,
+            options: options
         )
     }
 
     /// Calls the function and directly decodes its result.
     public func call<each Argument, Result>(
         _ arguments: repeat each Argument,
-        as type: Result.Type = Result.self
+        as type: Result.Type = Result.self,
+        options: JavaScriptExecutionOptions = .init()
     ) async throws -> Result
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable,
@@ -35,7 +38,8 @@ public struct JavaScriptFunction: Sendable, Hashable {
         try await reference.runtime.call(
             reference,
             arguments: repeat each arguments,
-            as: type
+            as: type,
+            options: options
         )
     }
 
@@ -43,7 +47,8 @@ public struct JavaScriptFunction: Sendable, Hashable {
     public func call<each Argument, Result>(
         on receiver: JavaScriptObject,
         _ arguments: repeat each Argument,
-        as type: Result.Type = Result.self
+        as type: Result.Type = Result.self,
+        options: JavaScriptExecutionOptions = .init()
     ) async throws -> Result
     where repeat each Argument: Encodable,
           repeat each Argument: Sendable,
@@ -52,19 +57,22 @@ public struct JavaScriptFunction: Sendable, Hashable {
             reference,
             on: receiver.reference,
             arguments: repeat each arguments,
-            as: type
+            as: type,
+            options: options
         )
     }
 
     /// Calls the function with existing JavaScript values.
     public func call(
         arguments: [JavaScriptValue],
-        this receiver: JavaScriptObject? = nil
+        this receiver: JavaScriptObject? = nil,
+        options: JavaScriptExecutionOptions = .init()
     ) async throws -> JavaScriptValue {
         try await reference.runtime.call(
             reference,
             arguments: arguments,
-            receiver: receiver?.reference
+            receiver: receiver?.reference,
+            options: options
         )
     }
 }

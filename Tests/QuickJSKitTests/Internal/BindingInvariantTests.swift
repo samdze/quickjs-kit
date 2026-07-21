@@ -93,6 +93,40 @@ struct BindingInvariantTests {
         #expect(weakCapture.value == nil)
     }
 
+    @Test("binding descriptions use canonical global object and module locations")
+    func descriptionsUseCanonicalLocations() async throws {
+        let runtime = try JavaScriptRuntime()
+        try await runtime.function("globalFunction") { () -> Int in 1 }
+        let root = ExportRoot()
+        _ = try await runtime.export(root, as: "root") { _, export in
+            export.function("objectFunction") { () -> Int in 2 }
+        }
+        try await runtime.defineModule("swift:metadata") { module in
+            module.function("moduleFunction") { () -> Int in 3 }
+        }
+
+        let descriptions = await runtime.bindingDescriptionsForTesting
+        let locations = Dictionary(uniqueKeysWithValues: descriptions.map {
+            ($0.name, $0.location)
+        })
+
+        #expect(locations["globalFunction"] == .global)
+        #expect(locations["objectFunction"] == .objectExport(name: "root"))
+        #expect(locations["moduleFunction"] == .module(specifier: "swift:metadata"))
+    }
+
+    @Test("an outer engine entry refreshes the stack and checkpoints once")
+    func outerEntryHasOnePreparationAndCheckpoint() async throws {
+        let runtime = try JavaScriptRuntime()
+        let initialRefreshes = await runtime.stackTopRefreshCountForTesting
+        let initialCheckpoints = await runtime.checkpointCountForTesting
+
+        _ = try await runtime.evaluate("42")
+
+        #expect(await runtime.stackTopRefreshCountForTesting == initialRefreshes + 1)
+        #expect(await runtime.checkpointCountForTesting == initialCheckpoints + 1)
+    }
+
     private struct Model: Codable, Sendable {
         let id: Int
     }

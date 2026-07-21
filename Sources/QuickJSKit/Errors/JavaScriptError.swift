@@ -21,6 +21,15 @@ public struct JavaScriptError: Error, Sendable, Equatable, CustomStringConvertib
         /// Swift task cancellation interrupted execution.
         case cancelled
 
+        /// Module resolution, loading, or linking failed.
+        case module
+
+        /// A host-provided interrupt handler stopped execution.
+        case interrupted
+
+        /// A synchronous operation encountered work that must suspend.
+        case wouldSuspend
+
         /// A Swift or JavaScript value could not be converted.
         case conversion
 

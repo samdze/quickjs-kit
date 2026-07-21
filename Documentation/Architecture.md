@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the implemented Phase 5 architecture and the stable
+This document describes the implemented Phase 5.1 architecture and the stable
 boundaries reserved for later platform capabilities. Features identified as
 future work are design constraints, not current API promises.
 
@@ -17,7 +17,7 @@ JavaScriptRuntime actor
     ├── native Promise jobs, host waiters, cancellation, and rejection reports
     ├── ES modules, Swift modules, and asynchronous source loading
     ├── live-value identity and lifetime coordination
-    ├── detached environment metadata and TypeScript schema capture
+    ├── detached environment, TypeScript schema, and TSDoc metadata
     └── QuickJSEngine (internal, non-Sendable)
             ├── one JSRuntime heap and one JSContext realm
             ├── one top-level execution scope and interrupt callback
@@ -313,9 +313,19 @@ Declaration rendering is a pure transformation over that snapshot. Strict
 generation rejects custom Codable types without schemas and source modules
 without companion declaration bodies. Permissive generation emits explicit
 `unknown` types and untyped ambient modules. Rendering order and whitespace are
-canonical, and JavaScript documentation becomes escaped JSDoc. Source module
+canonical. Structured TSDoc covers summaries, remarks, parameters, returns,
+errors, examples, links, defaults, and deprecation. User text is normalized and
+escaped so it cannot terminate a comment or inject an unintended block tag.
+Source module
 companions are wrapped under their canonical module specifier; QuickJSKit does
 not infer types from source text.
+
+Documentation completeness is an orthogonal generation policy. Its strict mode
+requires summaries for every generated declaration, parameter descriptions,
+return documentation for non-`Void` functions, and explicit error conditions
+for throwing functions. Source companion bodies remain opaque. Documentation
+uses the same transactional environment ownership as types, so failed
+publication and stale binding removal cannot corrupt later editor snapshots.
 
 `TypeScriptWorkspace` is another detached value. It generates one declaration
 file, a strict no-emit `tsconfig.json`, and optionally a private ESM

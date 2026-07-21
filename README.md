@@ -93,7 +93,14 @@ let sum = try await runtime.function(
     "sum",
     options: .init(
         parameterNames: ["left", "right"],
-        documentation: "Adds two integers."
+        documentation: .init(
+            summary: "Adds two integers.",
+            parameters: [
+                "left": "The first integer.",
+                "right": "The second integer.",
+            ],
+            returns: "The exact sum.",
+        ),
     )
 ) { (left: Int, right: Int) in
     left + right
@@ -230,9 +237,19 @@ extension User: TypeScriptSchemaProviding {
         "User",
         documentation: "A user visible to embedded scripts.",
         properties: [
-            .init("id", type: .number, isReadonly: true),
-            .init("name", type: .string, isReadonly: true),
-        ]
+            .init(
+                "id",
+                type: .number,
+                isReadonly: true,
+                documentation: "The stable user identifier.",
+            ),
+            .init(
+                "name",
+                type: .string,
+                isReadonly: true,
+                documentation: "The display name.",
+            ),
+        ],
     )
 }
 ```
@@ -273,6 +290,28 @@ try await runtime.registerModule(
 Strict generation reports custom `Codable` types without a schema and source
 modules without companion declarations. `.allowUntyped` is an explicit escape
 hatch that renders these surfaces as `unknown` or untyped ambient modules.
+
+Functions and declarations accept structured TSDoc containing summaries,
+remarks, parameter and return documentation, thrown-error conditions, examples,
+see-also links, defaults, and deprecation guidance. This metadata is emitted in
+the generated `.d.ts` file, so TypeScript-aware editors can display it in hover
+cards, signature help, completion details, and deprecation diagnostics.
+
+Documentation completeness is independent from type completeness. Applications
+can make complete IDE documentation a generation gate:
+
+```swift
+let declarations = try environment.typeScriptDeclarations(
+    options: .init(
+        documentationCompleteness: .requireComplete
+    )
+)
+```
+
+In this mode, every generated symbol needs a summary, every parameter needs a
+description, non-`Void` functions need return documentation, and throwing
+functions need at least one documented error. Source-module companion bodies
+remain opaque and are responsible for documenting their own exports.
 
 ## Concurrency and ownership
 

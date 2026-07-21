@@ -375,6 +375,8 @@ happy path.
 - Explicit macro-ready schemas and detached environment snapshots.
 - Deterministic `.d.ts` generation for globals, exports, modules, models, docs,
   and enum literal unions.
+- Structured TSDoc for hover cards, signature help, examples, links, defaults,
+  errors, and deprecation, with an independent documentation-completeness gate.
 - Reproducible managed editor workspaces with safe explicit regeneration.
 
 ### Phase 6 — templates, macros, and ecosystem maturity

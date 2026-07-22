@@ -80,6 +80,35 @@ extension QuickJSEngine {
                         in: context
                     )
                     exports[member.name] = rawFunction
+                case let .runtimeFunction(definition):
+                    let identifier = try allocateBindingIdentifier()
+                    let boundFunction = definition.bind(
+                        location: .module(specifier: specifier),
+                        order: UInt64(order),
+                        settle: settle
+                    )
+                    let binding = RegisteredBinding(
+                        identifier: identifier,
+                        name: member.name,
+                        function: boundFunction
+                    )
+                    swiftBindings[identifier] = binding
+                    bindingIdentifiers.append(identifier)
+                    let rawFunction = try makeBoundFunction(
+                        bindingIdentifier: identifier,
+                        name: member.name,
+                        length: boundFunction.description.parameters.count
+                    )
+                    binding.exposedValue = ManagedQuickJSValue(
+                        JS_DupValue(context, rawFunction.raw),
+                        in: context
+                    )
+                    exports[member.name] = rawFunction
+                case .property, .runtimeProperty:
+                    throw JavaScriptError(
+                        kind: .module,
+                        message: "Swift modules cannot export live properties; expose an object or an explicit getter method instead."
+                    )
                 }
             }
 

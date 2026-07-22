@@ -1,4 +1,30 @@
 extension JavaScriptRuntime {
+    /// Defines a method-only Swift module from a macro-generated export.
+    public func defineModule<Root: JavaScriptExportProviding & Sendable>(
+        _ specifier: String,
+        exporting root: Root,
+        documentation: TypeScriptDocumentation? = nil
+    ) async throws {
+        let rootIdentifier = try retainRuntimeRoot(root)
+        do {
+            let members = try await Root.javaScriptExportDefinition.materialize(
+                on: self,
+                rootIdentifier: rootIdentifier
+            )
+            try engine.withEngineEntry {
+                try engine.registerSwiftModule(
+                    specifier: specifier,
+                    documentation: documentation ?? Root.javaScriptExportDocumentation,
+                    members: members,
+                    settle: bindingSettlement
+                )
+            }
+        } catch {
+            releaseRuntimeRoot(rootIdentifier)
+            throw error
+        }
+    }
+
     /// Defines a runtime-lifetime ES module backed by Swift values and functions.
     ///
     /// Definition is transactional: validation and value encoding finish

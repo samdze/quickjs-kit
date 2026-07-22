@@ -22,6 +22,17 @@ internal enum BindingTypeShape: Sendable, Hashable {
 internal struct BindingParameterDescription: Sendable, Hashable {
     internal let name: String
     internal let type: BindingTypeShape
+    internal let sourceLocation: TypeScriptSourceLocation?
+
+    internal init(
+        name: String,
+        type: BindingTypeShape,
+        sourceLocation: TypeScriptSourceLocation? = nil
+    ) {
+        self.name = name
+        self.type = type
+        self.sourceLocation = sourceLocation
+    }
 }
 
 internal struct BindingDescription: Sendable, Hashable {
@@ -42,6 +53,7 @@ internal struct BindingDescription: Sendable, Hashable {
     internal let result: BindingTypeShape
     internal let effects: Effects
     internal let documentation: TypeScriptFunctionDocumentation?
+    internal let sourceLocation: TypeScriptSourceLocation?
     internal let order: UInt64
 }
 
@@ -51,6 +63,7 @@ internal struct BindingDraft: Sendable {
     internal let result: BindingTypeShape
     internal let effects: BindingDescription.Effects
     internal let documentation: TypeScriptFunctionDocumentation?
+    internal let sourceLocation: TypeScriptSourceLocation?
 
     internal func finalize(
         location: BindingDescription.Location,
@@ -63,6 +76,7 @@ internal struct BindingDraft: Sendable {
             result: result,
             effects: effects,
             documentation: documentation,
+            sourceLocation: sourceLocation,
             order: order
         )
     }
@@ -192,8 +206,46 @@ private func bindingTypeShape(forAny type: Any.Type) -> BindingTypeShape {
        ObjectIdentifier(dictionary.keyBindingType) == ObjectIdentifier(String.self) {
         return .dictionary(bindingTypeShape(forAny: dictionary.valueBindingType))
     }
-    let schema = (type as? any TypeScriptSchemaProviding.Type)?.typeScriptSchema
+    let schema = (type as? any TypeScriptSchemaProviding.Type).map {
+        collectedTypeScriptSchema(from: $0)
+    }
     return .codable(swiftName: String(reflecting: type), schema: schema)
+}
+
+private func collectedTypeScriptSchema(
+    from provider: any TypeScriptSchemaProviding.Type
+) -> TypeScriptSchema {
+    let primary = provider.typeScriptSchema
+    var visited: Set<ObjectIdentifier> = []
+    var definitions: [TypeScriptDefinition] = []
+
+    func collect(_ current: any TypeScriptSchemaProviding.Type) {
+        guard visited.insert(ObjectIdentifier(current)).inserted else { return }
+        let schema = current.typeScriptSchema
+        definitions.append(contentsOf: schema.definitions.map { definition in
+            guard definition.scope == nil, let scope = schema.scope else {
+                return definition
+            }
+            return TypeScriptDefinition(
+                name: definition.name,
+                scope: scope,
+                documentation: definition.documentation,
+                sourceLocation: definition.sourceLocation,
+                kind: definition.kind
+            )
+        })
+        for dependency in current.typeScriptSchemaDependencies {
+            collect(dependency)
+        }
+    }
+
+    collect(provider)
+    return TypeScriptSchema(
+        type: primary.type,
+        definitions: definitions,
+        scope: primary.scope,
+        sourceLocation: primary.sourceLocation
+    )
 }
 
 internal func bindingParameterShapes<each Parameter>(

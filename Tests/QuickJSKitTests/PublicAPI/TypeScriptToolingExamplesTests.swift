@@ -590,7 +590,9 @@ struct TypeScriptToolingExamplesTests {
         let options = TypeScriptDeclarationOptions(
             documentationCompleteness: .requireComplete
         )
-        let declarations = try environment.typeScriptDeclarations(options: options)
+        let declarations = try environment.typeScriptDeclarationBundle(
+            options: options
+        ).declarations
         let workspace = try environment.typeScriptWorkspace(
             options: .init(declarationOptions: options)
         )
@@ -803,6 +805,7 @@ struct TypeScriptToolingExamplesTests {
         #expect(workspace.files.map(\.path) == [
             "package.json",
             "quickjskit.generated.d.ts",
+            "quickjskit.generated.d.ts.map",
             "tsconfig.json",
         ])
         #expect(workspace.files.first { $0.path == "tsconfig.json" }?.contents.contains(

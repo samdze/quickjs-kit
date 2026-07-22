@@ -6,6 +6,19 @@
 public protocol TypeScriptSchemaProviding {
     /// The TypeScript schema representing this Swift type.
     static var typeScriptSchema: TypeScriptSchema { get }
+
+    /// Schemas referenced by this model.
+    ///
+    /// Macro-generated conformances use this detached graph to describe
+    /// recursive and mutually recursive models without global registration.
+    static var typeScriptSchemaDependencies: [any TypeScriptSchemaProviding.Type] { get }
+}
+
+extension TypeScriptSchemaProviding {
+    /// No additional schemas are required by default.
+    public static var typeScriptSchemaDependencies: [any TypeScriptSchemaProviding.Type] {
+        []
+    }
 }
 
 /// The TypeScript declaration location owned by a schema or definition.
@@ -53,15 +66,20 @@ public struct TypeScriptSchema: Sendable, Hashable {
     /// generated.
     public let scope: TypeScriptDeclarationScope?
 
+    /// The logical Swift declaration location, when known.
+    public let sourceLocation: TypeScriptSourceLocation?
+
     /// Creates a schema from a primary type and its named declarations.
     public init(
         type: TypeScriptType,
         definitions: [TypeScriptDefinition],
-        scope: TypeScriptDeclarationScope? = nil
+        scope: TypeScriptDeclarationScope? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil
     ) {
         self.type = type
         self.definitions = definitions
         self.scope = scope
+        self.sourceLocation = sourceLocation
     }
 
     /// Creates a schema containing one interface declaration.
@@ -69,6 +87,7 @@ public struct TypeScriptSchema: Sendable, Hashable {
         _ name: String,
         scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
         properties: [TypeScriptProperty]
     ) -> Self {
         Self(
@@ -77,10 +96,12 @@ public struct TypeScriptSchema: Sendable, Hashable {
                 .interface(
                     name: name,
                     documentation: documentation,
+                    sourceLocation: sourceLocation,
                     properties: properties
                 ),
             ],
-            scope: scope
+            scope: scope,
+            sourceLocation: sourceLocation
         )
     }
 
@@ -89,14 +110,21 @@ public struct TypeScriptSchema: Sendable, Hashable {
         _ name: String,
         to type: TypeScriptType,
         scope: TypeScriptDeclarationScope? = nil,
-        documentation: TypeScriptDocumentation? = nil
+        documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil
     ) -> Self {
         Self(
             type: .named(name),
             definitions: [
-                .alias(name: name, documentation: documentation, type: type),
+                .alias(
+                    name: name,
+                    documentation: documentation,
+                    sourceLocation: sourceLocation,
+                    type: type
+                ),
             ],
-            scope: scope
+            scope: scope,
+            sourceLocation: sourceLocation
         )
     }
 
@@ -108,6 +136,7 @@ public struct TypeScriptSchema: Sendable, Hashable {
         _ name: String,
         scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
         cases: [TypeScriptEnumCase]
     ) -> Self {
         Self(
@@ -116,10 +145,12 @@ public struct TypeScriptSchema: Sendable, Hashable {
                 .enumeration(
                     name: name,
                     documentation: documentation,
+                    sourceLocation: sourceLocation,
                     cases: cases
                 ),
             ],
-            scope: scope
+            scope: scope,
+            sourceLocation: sourceLocation
         )
     }
 }
@@ -181,6 +212,9 @@ public struct TypeScriptDefinition: Sendable, Hashable {
     /// Structured documentation rendered before the declaration.
     public let documentation: TypeScriptDocumentation?
 
+    /// The logical Swift declaration location, when known.
+    public let sourceLocation: TypeScriptSourceLocation?
+
     /// The declaration's structural form.
     public let kind: Kind
 
@@ -189,11 +223,13 @@ public struct TypeScriptDefinition: Sendable, Hashable {
         name: String,
         scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
         kind: Kind
     ) {
         self.name = name
         self.scope = scope
         self.documentation = documentation
+        self.sourceLocation = sourceLocation
         self.kind = kind
     }
 
@@ -202,12 +238,14 @@ public struct TypeScriptDefinition: Sendable, Hashable {
         name: String,
         scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
         properties: [TypeScriptProperty]
     ) -> Self {
         Self(
             name: name,
             scope: scope,
             documentation: documentation,
+            sourceLocation: sourceLocation,
             kind: .interface(properties: properties)
         )
     }
@@ -217,12 +255,14 @@ public struct TypeScriptDefinition: Sendable, Hashable {
         name: String,
         scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
         type: TypeScriptType
     ) -> Self {
         Self(
             name: name,
             scope: scope,
             documentation: documentation,
+            sourceLocation: sourceLocation,
             kind: .alias(type)
         )
     }
@@ -232,12 +272,14 @@ public struct TypeScriptDefinition: Sendable, Hashable {
         name: String,
         scope: TypeScriptDeclarationScope? = nil,
         documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
         cases: [TypeScriptEnumCase]
     ) -> Self {
         Self(
             name: name,
             scope: scope,
             documentation: documentation,
+            sourceLocation: sourceLocation,
             kind: .enumeration(cases: cases)
         )
     }
@@ -263,6 +305,9 @@ public struct TypeScriptProperty: Sendable, Hashable {
     /// The documented canonical default value, rendered with `@defaultValue`.
     public let defaultValue: String?
 
+    /// The logical Swift property location, when known.
+    public let sourceLocation: TypeScriptSourceLocation?
+
     /// Creates an interface property.
     public init(
         _ name: String,
@@ -270,7 +315,8 @@ public struct TypeScriptProperty: Sendable, Hashable {
         isOptional: Bool = false,
         isReadonly: Bool = false,
         documentation: TypeScriptDocumentation? = nil,
-        defaultValue: String? = nil
+        defaultValue: String? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil
     ) {
         self.name = name
         self.type = type
@@ -278,6 +324,7 @@ public struct TypeScriptProperty: Sendable, Hashable {
         self.isReadonly = isReadonly
         self.documentation = documentation
         self.defaultValue = defaultValue
+        self.sourceLocation = sourceLocation
     }
 }
 
@@ -292,15 +339,20 @@ public struct TypeScriptEnumCase: Sendable, Hashable {
     /// Structured documentation summarized in the literal union's TSDoc.
     public let documentation: TypeScriptDocumentation?
 
+    /// The logical Swift enum-case location, when known.
+    public let sourceLocation: TypeScriptSourceLocation?
+
     /// Creates a literal-union case.
     public init(
         _ name: String,
         value: TypeScriptLiteral,
-        documentation: TypeScriptDocumentation? = nil
+        documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil
     ) {
         self.name = name
         self.value = value
         self.documentation = documentation
+        self.sourceLocation = sourceLocation
     }
 }
 

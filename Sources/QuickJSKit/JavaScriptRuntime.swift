@@ -1,3 +1,19 @@
+internal final class JavaScriptRuntimeState {
+    internal let engine: QuickJSEngine
+    internal var nextRootIdentifier: UInt64 = 1
+    internal var roots: [UInt64: AnyObject] = [:]
+
+    internal init(engine: QuickJSEngine) {
+        self.engine = engine
+    }
+
+    deinit {
+        // Runtime-local Swift roots must disappear before the engine releases
+        // callbacks and destroys the QuickJS context.
+        roots.removeAll()
+    }
+}
+
 /// An isolated JavaScript engine and its associated object heap.
 ///
 /// Every QuickJS operation is serialized by this actor. Independent runtimes
@@ -33,16 +49,18 @@ public actor JavaScriptRuntime {
     /// The immutable configuration used to create this runtime.
     public nonisolated let configuration: Configuration
 
-    internal let engine: QuickJSEngine
+    internal let runtimeState: JavaScriptRuntimeState
+    internal var engine: QuickJSEngine { runtimeState.engine }
     internal var moduleLoader: JavaScriptModuleLoader?
     internal var moduleLoadOperations: [String: ModuleLoadOperation] = [:]
     internal var nextModuleLoadWaiterIdentifier: UInt64 = 1
-    internal var templateRoots: [any AnyObject & Sendable] = []
 
     /// Creates an isolated JavaScript runtime.
     public init(configuration: Configuration = Configuration()) throws {
         self.configuration = configuration
-        self.engine = try QuickJSEngine(configuration: configuration)
+        let engine = try QuickJSEngine(configuration: configuration)
+        self.runtimeState = JavaScriptRuntimeState(engine: engine)
+        engine.attachOwner(self)
     }
 
     deinit {
@@ -125,6 +143,44 @@ public actor JavaScriptRuntime {
         } catch {
             assertionFailure("Reference release unexpectedly failed: \(error)")
         }
+    }
+
+    internal func performBindingOperation(
+        _ operation: @Sendable (
+            isolated JavaScriptRuntime
+        ) async -> BindingCompletion
+    ) async -> BindingCompletion {
+        await operation(self)
+    }
+
+    internal func retainRuntimeRoot<Root: AnyObject>(_ root: sending Root) throws -> UInt64 {
+        guard runtimeState.nextRootIdentifier < UInt64.max else {
+            throw JavaScriptError(
+                kind: .resourceLimit,
+                message: "The runtime-local root identifier space is exhausted."
+            )
+        }
+        let identifier = runtimeState.nextRootIdentifier
+        runtimeState.nextRootIdentifier += 1
+        runtimeState.roots[identifier] = root
+        return identifier
+    }
+
+    internal func runtimeRoot<Root: AnyObject>(
+        _ identifier: UInt64,
+        as type: Root.Type = Root.self
+    ) throws -> Root {
+        guard let root = runtimeState.roots[identifier] as? Root else {
+            throw JavaScriptError(
+                kind: .internalFailure,
+                message: "A runtime-local Swift root is no longer available."
+            )
+        }
+        return root
+    }
+
+    internal func releaseRuntimeRoot(_ identifier: UInt64) {
+        runtimeState.roots.removeValue(forKey: identifier)
     }
 
     internal var retainedReferenceCountForTesting: Int {

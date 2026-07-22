@@ -4,6 +4,7 @@ internal struct EnvironmentFunctionDescription: Sendable, Hashable {
     internal let result: BindingTypeShape
     internal let effects: BindingDescription.Effects
     internal let documentation: TypeScriptFunctionDocumentation?
+    internal let sourceLocation: TypeScriptSourceLocation?
 
     internal init(_ description: BindingDescription) {
         self.name = description.name
@@ -11,6 +12,7 @@ internal struct EnvironmentFunctionDescription: Sendable, Hashable {
         self.result = description.result
         self.effects = description.effects
         self.documentation = description.documentation
+        self.sourceLocation = description.sourceLocation
     }
 
     internal init(_ draft: BindingDraft) {
@@ -19,6 +21,7 @@ internal struct EnvironmentFunctionDescription: Sendable, Hashable {
         self.result = draft.result
         self.effects = draft.effects
         self.documentation = draft.documentation
+        self.sourceLocation = draft.sourceLocation
     }
 }
 
@@ -27,6 +30,21 @@ internal struct EnvironmentValueDescription: Sendable, Hashable {
     internal let type: BindingTypeShape
     internal let documentation: TypeScriptDocumentation?
     internal let isReadOnly: Bool
+    internal let sourceLocation: TypeScriptSourceLocation?
+
+    internal init(
+        name: String,
+        type: BindingTypeShape,
+        documentation: TypeScriptDocumentation?,
+        isReadOnly: Bool,
+        sourceLocation: TypeScriptSourceLocation? = nil
+    ) {
+        self.name = name
+        self.type = type
+        self.documentation = documentation
+        self.isReadOnly = isReadOnly
+        self.sourceLocation = sourceLocation
+    }
 }
 
 internal enum EnvironmentMemberDescription: Sendable, Hashable {
@@ -88,6 +106,26 @@ extension JavaScriptExportMemberDefinition {
         switch storage {
         case let .function(definition):
             return .function(EnvironmentFunctionDescription(definition.draft))
+        case let .runtimeFunction(definition):
+            return .function(EnvironmentFunctionDescription(definition.draft))
+        case let .property(type, _, setter):
+            return .value(
+                EnvironmentValueDescription(
+                    name: name,
+                    type: type,
+                    documentation: documentation,
+                    isReadOnly: setter == nil
+                )
+            )
+        case let .runtimeProperty(type, _, setter):
+            return .value(
+                EnvironmentValueDescription(
+                    name: name,
+                    type: type,
+                    documentation: documentation,
+                    isReadOnly: setter == nil
+                )
+            )
         case let .value(type, _), let .liveValue(type, _):
             return .value(
                 EnvironmentValueDescription(

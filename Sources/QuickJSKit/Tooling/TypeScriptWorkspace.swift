@@ -27,6 +27,9 @@ public struct TypeScriptWorkspaceOptions: Sendable, Hashable {
     /// Options for the generated ambient declaration file.
     public var declarationOptions: TypeScriptDeclarationOptions
 
+    /// Source-map options, or `nil` to omit declaration maps.
+    public var sourceMapOptions: TypeScriptSourceMapOptions?
+
     /// Creates workspace options.
     public init(
         sourceGlobs: [String] = [
@@ -37,12 +40,14 @@ public struct TypeScriptWorkspaceOptions: Sendable, Hashable {
         ],
         checkJavaScript: Bool = true,
         includePackageJSON: Bool = false,
-        declarationOptions: TypeScriptDeclarationOptions = .init()
+        declarationOptions: TypeScriptDeclarationOptions = .init(),
+        sourceMapOptions: TypeScriptSourceMapOptions? = .init()
     ) {
         self.sourceGlobs = sourceGlobs
         self.checkJavaScript = checkJavaScript
         self.includePackageJSON = includePackageJSON
         self.declarationOptions = declarationOptions
+        self.sourceMapOptions = sourceMapOptions
     }
 }
 
@@ -81,15 +86,30 @@ public struct TypeScriptWorkspace: Sendable, Hashable {
         for glob in options.sourceGlobs {
             try Self.validateRelativePath(glob, role: "source glob", permitsGlob: true)
         }
-        var files = [
-            File(
-                path: "quickjskit.generated.d.ts",
-                contents: try environment.typeScriptDeclarations(
-                    options: options.declarationOptions
-                )
-            ),
-            File(path: "tsconfig.json", contents: Self.tsconfig(options: options)),
-        ]
+        let declarations: String
+        var files: [File]
+        if let sourceMapOptions = options.sourceMapOptions {
+            let bundle = try environment.typeScriptDeclarationBundle(
+                options: options.declarationOptions,
+                sourceMapOptions: sourceMapOptions
+            )
+            declarations = bundle.declarations
+            files = [
+                File(
+                    path: "quickjskit.generated.d.ts.map",
+                    contents: bundle.sourceMap
+                ),
+            ]
+        } else {
+            declarations = try environment.typeScriptDeclarations(
+                options: options.declarationOptions
+            )
+            files = []
+        }
+        files.append(
+            File(path: "quickjskit.generated.d.ts", contents: declarations)
+        )
+        files.append(File(path: "tsconfig.json", contents: Self.tsconfig(options: options)))
         if options.includePackageJSON {
             files.append(
                 File(

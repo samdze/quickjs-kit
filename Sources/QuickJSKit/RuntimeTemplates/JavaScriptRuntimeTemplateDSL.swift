@@ -28,6 +28,22 @@ public struct SharedObject<Root: AnyObject & Sendable>: Sendable {
             content
         )
     }
+
+    /// Creates a shared object from a macro-generated export definition.
+    public init(
+        _ root: Root,
+        as name: String,
+        documentation: TypeScriptDocumentation? = nil
+    ) where Root: JavaScriptExportProviding {
+        component = .instance(factory: { root }) {
+            JavaScriptRuntimeTemplate.Instance<Root>.export(
+                as: name,
+                documentation: documentation ?? Root.javaScriptExportDocumentation
+            ) {
+                Root.javaScriptExportDefinition
+            }
+        }
+    }
 }
 
 /// Declares a Swift-defined ES module in a runtime template.
@@ -81,12 +97,12 @@ public struct ModuleLoader: Sendable {
 }
 
 /// Declares independently created Swift state for each runtime.
-public struct RuntimeInstance<Root: AnyObject & Sendable>: Sendable {
+public struct RuntimeInstance<Root: AnyObject>: Sendable {
     internal let component: JavaScriptRuntimeTemplate.Component
 
     /// Creates a per-runtime factory group.
     public init(
-        factory: @escaping @Sendable () async throws -> Root,
+        factory: @escaping @Sendable () async throws -> sending Root,
         @JavaScriptRuntimeTemplate.InstanceBuilder<Root> _ content: @Sendable () -> JavaScriptRuntimeTemplate.Instance<Root>
     ) {
         component = .instance(factory: factory, content)
@@ -210,8 +226,41 @@ public struct Value: Sendable {
     }
 }
 
+/// Declares a live property in a shared object or global export.
+public struct Property: Sendable {
+    internal let export: JavaScriptRuntimeTemplate.Export
+
+    /// Creates a read-only live property.
+    public init<Value: Encodable & Sendable>(
+        _ name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        get: @escaping @Sendable () -> Value
+    ) {
+        var builder = JavaScriptExportBuilder()
+        builder.property(name, documentation: documentation, get: get)
+        export = JavaScriptRuntimeTemplate.Export(members: builder.members)
+    }
+
+    /// Creates a readable and writable live property.
+    public init<Value: Codable & Sendable>(
+        _ name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        get: @escaping @Sendable () -> Value,
+        set: @escaping @Sendable (Value) -> Void
+    ) {
+        var builder = JavaScriptExportBuilder()
+        builder.property(
+            name,
+            documentation: documentation,
+            get: get,
+            set: set
+        )
+        export = JavaScriptRuntimeTemplate.Export(members: builder.members)
+    }
+}
+
 /// Declares root-backed bindings on the JavaScript global object.
-public struct RuntimeGlobals<Root: AnyObject & Sendable>: Sendable {
+public struct RuntimeGlobals<Root: AnyObject>: Sendable {
     internal let instance: JavaScriptRuntimeTemplate.Instance<Root>
 
     /// Creates a per-runtime global declaration group.
@@ -220,10 +269,16 @@ public struct RuntimeGlobals<Root: AnyObject & Sendable>: Sendable {
     ) {
         instance = .globals(content)
     }
+
+    /// Creates global bindings from a macro-generated export definition.
+    public init() where Root: JavaScriptExportProviding {
+        let definition = Root.javaScriptExportDefinition
+        instance = .globals { definition }
+    }
 }
 
 /// Declares a named object backed by per-runtime Swift state.
-public struct RuntimeObject<Root: AnyObject & Sendable>: Sendable {
+public struct RuntimeObject<Root: AnyObject>: Sendable {
     internal let instance: JavaScriptRuntimeTemplate.Instance<Root>
 
     /// Creates a per-runtime object export.
@@ -238,10 +293,24 @@ public struct RuntimeObject<Root: AnyObject & Sendable>: Sendable {
             content
         )
     }
+
+    /// Creates an object from a macro-generated export definition.
+    public init(
+        as name: String,
+        documentation: TypeScriptDocumentation? = nil
+    ) where Root: JavaScriptExportProviding {
+        let definition = Root.javaScriptExportDefinition
+        instance = .export(
+            as: name,
+            documentation: documentation ?? Root.javaScriptExportDocumentation
+        ) {
+            definition
+        }
+    }
 }
 
 /// Declares a Swift module backed by per-runtime Swift state.
-public struct RuntimeModule<Root: AnyObject & Sendable>: Sendable {
+public struct RuntimeModule<Root: AnyObject>: Sendable {
     internal let instance: JavaScriptRuntimeTemplate.Instance<Root>
 
     /// Creates a per-runtime Swift module declaration.
@@ -256,10 +325,24 @@ public struct RuntimeModule<Root: AnyObject & Sendable>: Sendable {
             content
         )
     }
+
+    /// Creates a method-only module from a macro-generated export definition.
+    public init(
+        _ specifier: String,
+        documentation: TypeScriptDocumentation? = nil
+    ) where Root: JavaScriptExportProviding {
+        let definition = Root.javaScriptExportDefinition
+        instance = .module(
+            specifier,
+            documentation: documentation ?? Root.javaScriptExportDocumentation
+        ) {
+            definition
+        }
+    }
 }
 
 /// Declares a function receiving a per-runtime Swift root as its first argument.
-public struct InstanceFunction<Root: AnyObject & Sendable>: Sendable {
+public struct InstanceFunction<Root: AnyObject>: Sendable {
     internal let export: JavaScriptRuntimeTemplate.InstanceExport<Root>
 
     /// Creates a synchronous root-backed function declaration.
@@ -288,6 +371,7 @@ public struct InstanceFunction<Root: AnyObject & Sendable>: Sendable {
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (Root, repeat each Argument) async -> Result
     ) where repeat each Argument: Decodable & Sendable,
+            Root: Sendable,
             Result: Encodable & Sendable {
         export = .function(name, options: options, body)
     }
@@ -298,6 +382,7 @@ public struct InstanceFunction<Root: AnyObject & Sendable>: Sendable {
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (Root, repeat each Argument) async throws -> Result
     ) where repeat each Argument: Decodable & Sendable,
+            Root: Sendable,
             Result: Encodable & Sendable {
         export = .function(name, options: options, body)
     }
@@ -325,7 +410,8 @@ public struct InstanceFunction<Root: AnyObject & Sendable>: Sendable {
         _ name: String,
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (Root, repeat each Argument) async -> Void
-    ) where repeat each Argument: Decodable & Sendable {
+    ) where repeat each Argument: Decodable & Sendable,
+            Root: Sendable {
         export = .function(name, options: options, body)
     }
 
@@ -334,13 +420,87 @@ public struct InstanceFunction<Root: AnyObject & Sendable>: Sendable {
         _ name: String,
         options: JavaScriptFunctionOptions = .init(),
         _ body: @escaping @Sendable (Root, repeat each Argument) async throws -> Void
-    ) where repeat each Argument: Decodable & Sendable {
+    ) where repeat each Argument: Decodable & Sendable,
+            Root: Sendable {
         export = .function(name, options: options, body)
+    }
+
+    /// Creates an actor-confined asynchronous root-backed function.
+    ///
+    /// The runtime parameter is Swift-only and lets the compiler prove that a
+    /// non-`Sendable` root remains on its owning runtime actor.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async -> Result
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: Encodable & Sendable {
+        export = .function(
+            name,
+            options: options,
+            runtimeIsolated: body
+        )
+    }
+
+    /// Creates an actor-confined asynchronous throwing root-backed function.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async throws -> Result
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: Encodable & Sendable {
+        export = .function(
+            name,
+            options: options,
+            runtimeIsolated: body
+        )
+    }
+
+    /// Creates an actor-confined asynchronous root-backed function returning `undefined`.
+    public init<each Argument>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async -> Void
+    ) where repeat each Argument: Decodable & Sendable {
+        export = .function(
+            name,
+            options: options,
+            runtimeIsolated: body
+        )
+    }
+
+    /// Creates an actor-confined asynchronous throwing root-backed function returning `undefined`.
+    public init<each Argument>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async throws -> Void
+    ) where repeat each Argument: Decodable & Sendable {
+        export = .function(
+            name,
+            options: options,
+            runtimeIsolated: body
+        )
     }
 }
 
 /// Declares a snapshot value produced from per-runtime Swift state.
-public struct InstanceValue<Root: AnyObject & Sendable>: Sendable {
+public struct InstanceValue<Root: AnyObject>: Sendable {
     internal let export: JavaScriptRuntimeTemplate.InstanceExport<Root>
 
     /// Creates a per-runtime snapshot value declaration.
@@ -348,11 +508,82 @@ public struct InstanceValue<Root: AnyObject & Sendable>: Sendable {
         as name: String,
         documentation: TypeScriptDocumentation? = nil,
         _ produce: @escaping @Sendable (Root) async throws -> Snapshot
-    ) {
+    ) where Root: Sendable {
         export = .value(
             as: name,
             documentation: documentation,
             produce
+        )
+    }
+
+    /// Creates a snapshot while isolated to the destination runtime actor.
+    public init<Snapshot: Encodable & Sendable>(
+        as name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        runtimeIsolated produce: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root
+        ) async throws -> Snapshot
+    ) {
+        export = .value(
+            as: name,
+            documentation: documentation,
+            runtimeIsolated: produce
+        )
+    }
+}
+
+/// Declares a live property backed by one runtime-local Swift root.
+public struct InstanceProperty<Root: AnyObject>: Sendable {
+    internal let export: JavaScriptRuntimeTemplate.InstanceExport<Root>
+
+    /// Creates a read-only runtime-local property.
+    public init<Value: Encodable & Sendable>(
+        _ name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
+        get: @escaping @Sendable (Root) -> Value
+    ) {
+        export = .property(
+            name,
+            documentation: documentation,
+            sourceLocation: sourceLocation,
+            get: get
+        )
+    }
+
+    /// Creates a readable and writable runtime-local property.
+    public init<Value: Codable & Sendable>(
+        _ name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
+        get: @escaping @Sendable (Root) -> Value,
+        set: @escaping @Sendable (Root, Value) -> Void
+    ) {
+        export = .property(
+            name,
+            documentation: documentation,
+            sourceLocation: sourceLocation,
+            get: get,
+            set: set
+        )
+    }
+
+    /// Creates a Promise-valued read-only runtime-local property.
+    public init<Value: Encodable & Sendable>(
+        _ name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        sourceLocation: TypeScriptSourceLocation? = nil,
+        runtimeIsolatedGet get: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root
+        ) async -> Value
+    ) {
+        export = .property(
+            name,
+            documentation: documentation,
+            sourceLocation: sourceLocation,
+            runtimeIsolatedGet: get
         )
     }
 }
@@ -404,7 +635,7 @@ extension JavaScriptRuntimeTemplate.ContentBuilder {
     /// Accepts a shared object export.
     public static func buildExpression<Root>(
         _ expression: SharedObject<Root>
-    ) -> JavaScriptRuntimeTemplate.Component where Root: AnyObject & Sendable {
+    ) -> JavaScriptRuntimeTemplate.Component where Root: AnyObject {
         expression.component
     }
 
@@ -432,7 +663,7 @@ extension JavaScriptRuntimeTemplate.ContentBuilder {
     /// Accepts a per-runtime factory group.
     public static func buildExpression<Root>(
         _ expression: RuntimeInstance<Root>
-    ) -> JavaScriptRuntimeTemplate.Component where Root: AnyObject & Sendable {
+    ) -> JavaScriptRuntimeTemplate.Component where Root: AnyObject {
         expression.component
     }
 
@@ -462,6 +693,13 @@ extension JavaScriptRuntimeTemplate.ExportBuilder {
     /// Accepts a snapshot value declaration.
     public static func buildExpression(
         _ expression: Value
+    ) -> JavaScriptRuntimeTemplate.Export {
+        expression.export
+    }
+
+    /// Accepts a live property declaration.
+    public static func buildExpression(
+        _ expression: Property
     ) -> JavaScriptRuntimeTemplate.Export {
         expression.export
     }
@@ -501,6 +739,13 @@ extension JavaScriptRuntimeTemplate.InstanceExportBuilder {
     /// Accepts a root-produced snapshot value.
     public static func buildExpression(
         _ expression: InstanceValue<Root>
+    ) -> JavaScriptRuntimeTemplate.InstanceExport<Root> {
+        expression.export
+    }
+
+    /// Accepts a runtime-local live property declaration.
+    public static func buildExpression(
+        _ expression: InstanceProperty<Root>
     ) -> JavaScriptRuntimeTemplate.InstanceExport<Root> {
         expression.export
     }

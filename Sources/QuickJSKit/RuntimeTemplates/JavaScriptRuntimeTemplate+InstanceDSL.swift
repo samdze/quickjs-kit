@@ -1,7 +1,7 @@
 extension JavaScriptRuntimeTemplate {
     /// Composes JavaScript destinations backed by one per-runtime Swift root.
     @resultBuilder
-    public enum InstanceBuilder<Root: AnyObject & Sendable> {
+    public enum InstanceBuilder<Root: AnyObject> {
         /// Accepts one contextual per-runtime destination.
         internal static func buildExpression(
             _ expression: Instance<Root>
@@ -53,7 +53,7 @@ extension JavaScriptRuntimeTemplate {
     }
 
     /// One or more JavaScript destinations backed by a per-runtime Swift root.
-    public struct Instance<Root: AnyObject & Sendable>: Sendable {
+    public struct Instance<Root: AnyObject>: Sendable {
         internal var destinations: [RuntimeInstanceDestination<Root>] = []
 
         internal init() {}
@@ -111,7 +111,7 @@ extension JavaScriptRuntimeTemplate {
     }
 }
 
-internal enum RuntimeInstanceDestination<Root: AnyObject & Sendable>: Sendable {
+internal enum RuntimeInstanceDestination<Root: AnyObject>: Sendable {
     case globals([RuntimeInstanceMemberDefinition<Root>])
     case object(
         name: String,
@@ -187,23 +187,37 @@ internal enum RuntimeInstanceDestination<Root: AnyObject & Sendable>: Sendable {
         )
     }
 
-    internal func materialize(_ root: Root) async throws -> RuntimeTemplateDefinition {
+    internal func materialize(
+        on runtime: isolated JavaScriptRuntime,
+        rootIdentifier: UInt64
+    ) async throws -> RuntimeTemplateDefinition {
         let definition: RuntimeTemplateDefinition
         switch self {
         case let .globals(members):
-            definition = .globals(try await members.materialize(root))
+            definition = .globals(
+                try await members.materialize(
+                    on: runtime,
+                    rootIdentifier: rootIdentifier
+                )
+            )
         case let .object(name, documentation, members):
             definition = .object(
                 name: name,
                 documentation: documentation,
-                root: root,
-                members: try await members.materialize(root)
+                root: nil,
+                members: try await members.materialize(
+                    on: runtime,
+                    rootIdentifier: rootIdentifier
+                )
             )
         case let .module(specifier, documentation, members):
             definition = .module(
                 specifier: specifier,
                 documentation: documentation,
-                members: try await members.materialize(root)
+                members: try await members.materialize(
+                    on: runtime,
+                    rootIdentifier: rootIdentifier
+                )
             )
         }
         return definition
@@ -211,14 +225,17 @@ internal enum RuntimeInstanceDestination<Root: AnyObject & Sendable>: Sendable {
 }
 
 private extension Array {
-    func materialize<Root: AnyObject & Sendable>(
-        _ root: Root
+    func materialize<Root: AnyObject>(
+        on runtime: isolated JavaScriptRuntime,
+        rootIdentifier: UInt64
     ) async throws -> [JavaScriptExportMemberDefinition]
     where Element == RuntimeInstanceMemberDefinition<Root> {
         var result: [JavaScriptExportMemberDefinition] = []
         result.reserveCapacity(count)
         for member in self {
-            result.append(try await member.materialize(root))
+            result.append(
+                try await member.materialize(runtime, rootIdentifier)
+            )
         }
         return result
     }

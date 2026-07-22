@@ -2,6 +2,7 @@ internal import CQuickJS
 
 internal final class QuickJSRuntimeBridge {
     internal weak var engine: QuickJSEngine?
+    internal weak var owner: JavaScriptRuntime?
 }
 
 internal struct RegisteredJavaScriptReference {
@@ -142,6 +143,17 @@ internal final class QuickJSEngine {
             quickJSKitModuleLoader,
             Unmanaged.passUnretained(callbackBridge).toOpaque()
         )
+    }
+
+    internal func attachOwner(_ owner: JavaScriptRuntime) {
+        callbackBridge.owner = owner
+    }
+
+    internal func releaseRuntimeRoot(_ identifier: UInt64) {
+        guard let owner = callbackBridge.owner else { return }
+        owner.assumeIsolated { runtime in
+            runtime.releaseRuntimeRoot(identifier)
+        }
     }
 
     deinit {

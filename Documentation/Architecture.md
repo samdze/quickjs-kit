@@ -371,10 +371,10 @@ not a promise that all host-retained values will disappear.
 
 ## Stable future boundaries
 
-Future macros must emit the same schemas, binding drafts, export definitions,
-and runtime templates and may not create a parallel registration or module
-system. Workers, multiple contexts, declaration source maps, persistent
-bytecode, import attributes, and blocking Atomics remain deferred.
+Additional macros must emit the same schemas, binding drafts, export
+definitions, and runtime templates and may not create a parallel registration
+or module system. Workers, multiple contexts, persistent bytecode, import
+attributes, and blocking Atomics remain deferred.
 
 ## Error model
 
@@ -465,6 +465,43 @@ runtimes and transfers each one permanently. It replenishes with new template
 instances under explicit concurrency limits. Leasing and reusable pooling stay
 application-owned because QuickJSKit cannot reset an unknowable heap after
 arbitrary JavaScript, host callbacks, pending jobs, or module evaluation.
+
+## Compile-time exports and runtime-local roots
+
+The optional `QuickJSKitMacros` product is a syntax frontend over the same
+detached export definitions used by handwritten template declarations. The
+core `QuickJSKit` target has no build-time or runtime dependency on the macro
+plugin. `@JavaScriptExport` emits `JavaScriptExportProviding`, root-aware
+functions, live property accessors, structured documentation, and logical
+source locations. `@TypeScriptModel` emits `TypeScriptSchemaProviding` and an
+explicit dependency graph. No macro-generated callback bypasses the binding,
+Promise, conversion, module, or environment registries.
+
+Per-runtime factories return `sending Root` and run on the destination
+`JavaScriptRuntime` actor. The root is immediately inserted into a runtime
+state object that destroys local roots before its `QuickJSEngine`. Detached
+definitions and engine records contain only the root identifier. The C
+trampoline recovers a weak runtime owner and uses `assumeIsolated` to enforce
+that a synchronous QuickJS callback is running on the owning actor executor.
+It never marks the root or engine `@unchecked Sendable`.
+
+Ordinary async closures retain the `Root: Sendable` requirement. The
+`runtimeIsolated:` variants accept any `AnyObject` root and include an
+`isolated JavaScriptRuntime` Swift-only parameter. Swift therefore decides
+whether a member call can remain on the caller executor; an unsafe ordinary
+async method on a non-`Sendable` class fails concurrency checking.
+
+Live properties are canonical accessor bindings using the existing binding
+identifiers, argument decoder, Promise settlement, and rollback paths. They
+are enumerable and non-configurable. Writable accessors decode through the
+normal Codable path, and actor-isolated reads return native Promises.
+
+Macro origins flow through schemas and binding drafts into detached
+environment snapshots. `typeScriptDeclarationBundle()` emits Source Map v3
+JSON with UTF-16 generated columns and Base64 VLQ segments. Paths use logical
+file IDs, optional longest-prefix rewrites, and never embed an absolute build
+path unless the caller explicitly maps it. Managed workspaces own both the
+declaration and map through the existing regeneration manifest.
 
 ## Test architecture
 

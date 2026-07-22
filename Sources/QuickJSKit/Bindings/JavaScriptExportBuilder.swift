@@ -214,6 +214,62 @@ public struct JavaScriptExportBuilder {
         )
     }
 
+    /// Adds a live read-only property.
+    public mutating func property<Value: Encodable & Sendable>(
+        _ name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        get: @escaping @Sendable () -> Value
+    ) {
+        var getter = JavaScriptExportBuilder()
+        getter.function("get \(name)", get)
+        guard case let .function(getterDefinition) = getter.members[0].storage else {
+            return
+        }
+        members.append(
+            JavaScriptExportMemberDefinition(
+                name: name,
+                documentation: documentation,
+                validationMessage: exportMemberValidationMessage(name)
+                    ?? TypeScriptDocumentationValidation.message(for: documentation),
+                storage: .property(
+                    type: bindingTypeShape(for: Value.self),
+                    getter: getterDefinition,
+                    setter: nil
+                )
+            )
+        )
+    }
+
+    /// Adds a live readable and writable property.
+    public mutating func property<Value: Codable & Sendable>(
+        _ name: String,
+        documentation: TypeScriptDocumentation? = nil,
+        get: @escaping @Sendable () -> Value,
+        set: @escaping @Sendable (Value) -> Void
+    ) {
+        var getter = JavaScriptExportBuilder()
+        getter.function("get \(name)", get)
+        var setter = JavaScriptExportBuilder()
+        setter.function("set \(name)", set)
+        guard case let .function(getterDefinition) = getter.members[0].storage,
+              case let .function(setterDefinition) = setter.members[0].storage else {
+            return
+        }
+        members.append(
+            JavaScriptExportMemberDefinition(
+                name: name,
+                documentation: documentation,
+                validationMessage: exportMemberValidationMessage(name)
+                    ?? TypeScriptDocumentationValidation.message(for: documentation),
+                storage: .property(
+                    type: bindingTypeShape(for: Value.self),
+                    getter: getterDefinition,
+                    setter: setterDefinition
+                )
+            )
+        )
+    }
+
     private mutating func appendSynchronousFunction<each Argument, Result>(
         _ name: String,
         options: JavaScriptFunctionOptions,
@@ -263,7 +319,7 @@ public struct JavaScriptExportBuilder {
             let decoder = BindingArgumentDecoder(engine: engine, arguments: arguments)
             let decoded: (repeat each Argument) =
                 (repeat try decoder.next((each Argument).self))
-            return .asynchronous {
+            return .asynchronous { _ in
                 do {
                     return .success(encode(try await body(repeat each decoded)))
                 } catch {
@@ -292,6 +348,11 @@ public struct JavaScriptExportBuilder {
         let names = parameters.names
         let validationMessage = parameters.message
             ?? exportMemberValidationMessage(name)
+            ?? options.parameterSourceLocations.keys.sorted().first(where: {
+                !names.contains($0)
+            }).map {
+                "A source location was provided for unknown parameter '\($0)'."
+            }
             ?? TypeScriptDocumentationValidation.message(
                 for: options.documentation,
                 parameterNames: names
@@ -299,11 +360,16 @@ public struct JavaScriptExportBuilder {
         let draft = BindingDraft(
             name: name,
             parameters: zip(names, parameterShapes).map {
-                BindingParameterDescription(name: $0, type: $1)
+                BindingParameterDescription(
+                    name: $0,
+                    type: $1,
+                    sourceLocation: options.parameterSourceLocations[$0]
+                )
             },
             result: resultShape,
             effects: .init(isAsync: isAsync, isThrowing: isThrowing),
-            documentation: options.documentation
+            documentation: options.documentation,
+            sourceLocation: options.sourceLocation
         )
         members.append(
             JavaScriptExportMemberDefinition(
@@ -325,6 +391,17 @@ public struct JavaScriptExportBuilder {
 internal struct JavaScriptExportMemberDefinition: Sendable {
     internal enum Storage: Sendable {
         case function(BindingDefinition)
+        case runtimeFunction(RuntimeLocalFunctionDefinition)
+        case property(
+            type: BindingTypeShape,
+            getter: BindingDefinition,
+            setter: BindingDefinition?
+        )
+        case runtimeProperty(
+            type: BindingTypeShape,
+            getter: RuntimeLocalFunctionDefinition,
+            setter: RuntimeLocalFunctionDefinition?
+        )
         case value(
             type: BindingTypeShape,
             encode: @Sendable (QuickJSEngine) throws -> ManagedQuickJSValue
@@ -334,11 +411,70 @@ internal struct JavaScriptExportMemberDefinition: Sendable {
 
     internal let name: String
     internal let documentation: TypeScriptDocumentation?
+    internal let sourceLocation: TypeScriptSourceLocation?
     internal let validationMessage: String?
     internal let storage: Storage
+
+    internal init(
+        name: String,
+        documentation: TypeScriptDocumentation?,
+        sourceLocation: TypeScriptSourceLocation? = nil,
+        validationMessage: String?,
+        storage: Storage
+    ) {
+        self.name = name
+        self.documentation = documentation
+        self.sourceLocation = sourceLocation
+        self.validationMessage = validationMessage
+        self.storage = storage
+    }
 }
 
 extension JavaScriptRuntime {
+    /// Exposes a macro-generated object definition.
+    ///
+    /// The supplied root must be `Sendable` because it originates outside this
+    /// runtime actor. Runtime-local non-`Sendable` roots are supported only by
+    /// `RuntimeInstance` factories.
+    @discardableResult
+    public func export<Root: JavaScriptExportProviding & Sendable>(
+        _ root: Root,
+        as name: String,
+        documentation: TypeScriptDocumentation? = nil
+    ) async throws -> JavaScriptBinding {
+        if let message = BindingValidation.nameMessage(name, role: "Export names") {
+            throw JavaScriptError(kind: .conversion, message: message)
+        }
+        let rootIdentifier = try retainRuntimeRoot(root)
+        do {
+            let members = try await Root.javaScriptExportDefinition.materialize(
+                on: self,
+                rootIdentifier: rootIdentifier
+            )
+            return try engine.withEngineEntry {
+                let (identifier, rawValue) = try engine.registerExport(
+                    named: name,
+                    documentation: documentation ?? Root.javaScriptExportDocumentation,
+                    root: nil,
+                    runtimeRootIdentifier: rootIdentifier,
+                    members: members,
+                    settle: bindingSettlement
+                )
+                return JavaScriptBinding(
+                    name: name,
+                    value: makeValue(rawValue),
+                    reference: JavaScriptBindingReference(
+                        runtime: self,
+                        identifier: identifier
+                    )
+                )
+            }
+        } catch {
+            releaseRuntimeRoot(rootIdentifier)
+            throw error
+        }
+    }
+
     /// Exposes explicitly configured methods and snapshot values on one object.
     ///
     /// The operation is transactional: the global object is unchanged if any

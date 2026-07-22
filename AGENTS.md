@@ -392,13 +392,16 @@ happy path.
 - Batched template installation and one-shot prewarmed runtime provisioning.
 - Percentile benchmarks for startup, calls, modules, and ready acquisition.
 
-### Phase 7 — macros
+### Phase 7 — compile-time exports and models (completed)
 
-- Optional macro target that emits canonical schemas and binding definitions.
-- `@JavaScriptExport`-style actor and type exports.
-- Macro-generated runtime-template configuration using the handwritten path.
-- Declaration source locations and source maps when reliable compiler metadata
-  is available.
+- Optional macro product emitting canonical schemas and binding definitions.
+- `@JavaScriptExport` actors, Sendable classes, and uniquely transferred
+  runtime-local non-Sendable final classes.
+- Typed live property accessors and compiler-checked runtime-isolated async
+  adapters without unchecked Sendability.
+- `@TypeScriptModel` schemas for Codable structs, final classes, and raw enums.
+- Shared DocC-to-TSDoc extraction, logical declaration origins, and Source Map
+  v3 workspace artifacts.
 
 ### Phase 8 — ecosystem maturity
 

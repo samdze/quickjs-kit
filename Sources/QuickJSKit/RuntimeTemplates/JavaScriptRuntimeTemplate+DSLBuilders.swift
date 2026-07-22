@@ -132,8 +132,8 @@ extension JavaScriptRuntimeTemplate {
         }
 
         /// Declares Swift state created independently for every runtime.
-        internal static func instance<Root: AnyObject & Sendable>(
-            factory: @escaping @Sendable () async throws -> Root,
+        internal static func instance<Root: AnyObject>(
+            factory: @escaping @Sendable () async throws -> sending Root,
             @InstanceBuilder<Root> _ content: @Sendable () -> Instance<Root>
         ) -> Self {
             let destinations = content().destinations
@@ -143,17 +143,29 @@ extension JavaScriptRuntimeTemplate {
                     globals: destinations.flatMap(\.environmentGlobals),
                     modules: destinations.compactMap(\.environmentModule),
                     validationMessages: destinations.compactMap(\.validationMessage),
-                    instantiate: {
+                    install: { runtime in
                         let root = try await factory()
+                        try Task.checkCancellation()
+                        let rootIdentifier = try runtime.retainRuntimeRoot(root)
                         var definitions: [RuntimeTemplateDefinition] = []
                         definitions.reserveCapacity(destinations.count)
-                        for destination in destinations {
-                            definitions.append(try await destination.materialize(root))
+                        do {
+                            for destination in destinations {
+                                definitions.append(
+                                    try await destination.materialize(
+                                        on: runtime,
+                                        rootIdentifier: rootIdentifier
+                                    )
+                                )
+                            }
+                            try runtime.installTemplateInstance(
+                                definitions,
+                                rootIdentifier: rootIdentifier
+                            )
+                        } catch {
+                            runtime.releaseRuntimeRoot(rootIdentifier)
+                            throw error
                         }
-                        return MaterializedRuntimeTemplateInstance(
-                            root: root,
-                            definitions: definitions
-                        )
                     }
                 )
             )
@@ -239,6 +251,10 @@ extension JavaScriptRuntimeTemplate {
         internal var members: [JavaScriptExportMemberDefinition] = []
 
         internal init() {}
+
+        internal init(members: [JavaScriptExportMemberDefinition]) {
+            self.members = members
+        }
 
         /// Declares a synchronous typed function.
         internal static func function<each Argument, Result>(

@@ -1,4 +1,10 @@
 extension JavaScriptRuntime {
+    internal func installTemplateInstance(
+        _ instance: RuntimeTemplateInstanceDefinition
+    ) async throws {
+        try await instance.install(self)
+    }
+
     internal func installTemplatePrelude(
         _ plan: RuntimeTemplateProvisioningPlan,
         usingCompiledArtifacts: Bool,
@@ -53,18 +59,18 @@ extension JavaScriptRuntime {
     }
 
     internal func installTemplateInstance(
-        _ instance: MaterializedRuntimeTemplateInstance
+        _ definitions: [RuntimeTemplateDefinition],
+        rootIdentifier: UInt64
     ) throws {
-        templateRoots.append(instance.root)
         do {
             try engine.withEngineEntry(drainJobs: false) {
-                reserveCapacity(for: instance.definitions)
-                for definition in instance.definitions {
+                reserveCapacity(for: definitions)
+                for definition in definitions {
                     try installTemplateDefinition(definition)
                 }
             }
         } catch {
-            templateRoots.removeLast()
+            releaseRuntimeRoot(rootIdentifier)
             throw error
         }
     }
@@ -130,6 +136,70 @@ extension JavaScriptRuntime {
             _ = try engine.registerGlobalBinding(
                 named: member.name,
                 function: function
+            )
+        case let .runtimeFunction(definition):
+            let function = definition.bind(
+                location: .global,
+                order: engine.nextBindingIdentifier,
+                settle: bindingSettlement
+            )
+            _ = try engine.registerGlobalBinding(
+                named: member.name,
+                function: function
+            )
+        case let .property(type, getter, setter):
+            let global = engine.globalObject()
+            _ = try engine.defineBoundProperty(
+                member.name,
+                on: global.raw,
+                getter: getter.bind(
+                    location: .global,
+                    order: engine.nextBindingIdentifier,
+                    settle: bindingSettlement
+                ),
+                setter: setter?.bind(
+                    location: .global,
+                    order: engine.nextBindingIdentifier + 1,
+                    settle: bindingSettlement
+                )
+            )
+            engine.environmentGlobals[member.name] = RegisteredEnvironmentGlobal(
+                bindingIdentifier: nil,
+                description: .value(
+                    EnvironmentValueDescription(
+                        name: member.name,
+                        type: type,
+                        documentation: member.documentation,
+                        isReadOnly: setter == nil
+                    )
+                )
+            )
+        case let .runtimeProperty(type, getter, setter):
+            let global = engine.globalObject()
+            _ = try engine.defineBoundProperty(
+                member.name,
+                on: global.raw,
+                getter: getter.bind(
+                    location: .global,
+                    order: engine.nextBindingIdentifier,
+                    settle: bindingSettlement
+                ),
+                setter: setter?.bind(
+                    location: .global,
+                    order: engine.nextBindingIdentifier + 1,
+                    settle: bindingSettlement
+                )
+            )
+            engine.environmentGlobals[member.name] = RegisteredEnvironmentGlobal(
+                bindingIdentifier: nil,
+                description: .value(
+                    EnvironmentValueDescription(
+                        name: member.name,
+                        type: type,
+                        documentation: member.documentation,
+                        isReadOnly: setter == nil
+                    )
+                )
             )
         case let .value(type, encode):
             try engine.withEngineEntry {

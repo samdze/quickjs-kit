@@ -100,9 +100,7 @@ public struct JavaScriptRuntimeTemplate: Sendable {
 
         for instance in plan.instances {
             try Task.checkCancellation()
-            let materialized = try await instance.instantiate()
-            try Task.checkCancellation()
-            try await runtime.installTemplateInstance(materialized)
+            try await runtime.installTemplateInstance(instance)
         }
 
         for action in plan.startupActions {

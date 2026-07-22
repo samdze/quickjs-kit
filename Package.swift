@@ -1,6 +1,7 @@
 // swift-tools-version: 6.3
 
 import PackageDescription
+import CompilerPluginSupport
 
 let package = Package(
     name: "QuickJSKit",
@@ -13,6 +14,13 @@ let package = Package(
     ],
     products: [
         .library(name: "QuickJSKit", targets: ["QuickJSKit"]),
+        .library(name: "QuickJSKitMacros", targets: ["QuickJSKitMacros"]),
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/swiftlang/swift-syntax.git",
+            from: "603.0.0"
+        ),
     ],
     targets: [
         .target(
@@ -35,6 +43,20 @@ let package = Package(
             name: "QuickJSKit",
             dependencies: ["CQuickJS"]
         ),
+        .target(
+            name: "QuickJSKitMacros",
+            dependencies: ["QuickJSKit", "_QuickJSKitMacroPlugin"]
+        ),
+        .macro(
+            name: "_QuickJSKitMacroPlugin",
+            dependencies: [
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftDiagnostics", package: "swift-syntax"),
+            ]
+        ),
         .executableTarget(
             name: "QuickJSKitBenchmarks",
             dependencies: ["QuickJSKit"],
@@ -43,6 +65,14 @@ let package = Package(
         .testTarget(
             name: "QuickJSKitTests",
             dependencies: ["QuickJSKit"]
+        ),
+        .testTarget(
+            name: "QuickJSKitMacroTests",
+            dependencies: [
+                "QuickJSKit",
+                "QuickJSKitMacros",
+                "_QuickJSKitMacroPlugin",
+            ]
         ),
     ],
     swiftLanguageModes: [.v6],

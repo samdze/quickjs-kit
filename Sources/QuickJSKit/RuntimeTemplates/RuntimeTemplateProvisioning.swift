@@ -31,7 +31,7 @@ internal enum RuntimeTemplateDefinition: Sendable {
     case object(
         name: String,
         documentation: TypeScriptDocumentation?,
-        root: any AnyObject & Sendable,
+        root: (any AnyObject & Sendable)?,
         members: [JavaScriptExportMemberDefinition]
     )
     case module(
@@ -41,16 +41,13 @@ internal enum RuntimeTemplateDefinition: Sendable {
     )
 }
 
-internal struct MaterializedRuntimeTemplateInstance: Sendable {
-    internal let root: any AnyObject & Sendable
-    internal let definitions: [RuntimeTemplateDefinition]
-}
-
 internal struct RuntimeTemplateInstanceDefinition: Sendable {
     internal let globals: [EnvironmentGlobalDescription]
     internal let modules: [EnvironmentModuleDescription]
     internal let validationMessages: [String]
-    internal let instantiate: @Sendable () async throws -> MaterializedRuntimeTemplateInstance
+    internal let install: @Sendable (
+        isolated JavaScriptRuntime
+    ) async throws -> Void
 }
 
 internal struct RuntimeTemplateProvisioningPlan: Sendable {

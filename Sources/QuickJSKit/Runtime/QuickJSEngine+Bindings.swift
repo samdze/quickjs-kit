@@ -2,7 +2,9 @@ internal import CQuickJS
 
 internal enum BindingInvocation {
     case synchronous(ManagedQuickJSValue)
-    case asynchronous(@Sendable () async -> BindingCompletion)
+    case asynchronous(
+        @Sendable (isolated JavaScriptRuntime) async -> BindingCompletion
+    )
 }
 
 internal struct BindingResult: Sendable {
@@ -22,6 +24,7 @@ internal typealias BindingSettlement = @Sendable (
 internal struct BoundFunction {
     internal let description: BindingDescription
     internal let invoke: @Sendable (
+        isolated JavaScriptRuntime,
         QuickJSEngine,
         [ManagedQuickJSValue]
     ) throws -> BindingInvocation
@@ -31,6 +34,29 @@ internal struct BoundFunction {
 internal struct BindingDefinition: Sendable {
     internal let draft: BindingDraft
     internal let invoke: @Sendable (
+        QuickJSEngine,
+        [ManagedQuickJSValue]
+    ) throws -> BindingInvocation
+
+    internal func bind(
+        location: BindingDescription.Location,
+        order: UInt64,
+        settle: @escaping BindingSettlement
+    ) -> BoundFunction {
+        BoundFunction(
+            description: draft.finalize(location: location, order: order),
+            invoke: { _, engine, arguments in
+                try invoke(engine, arguments)
+            },
+            settle: settle
+        )
+    }
+}
+
+internal struct RuntimeLocalFunctionDefinition: Sendable {
+    internal let draft: BindingDraft
+    internal let invoke: @Sendable (
+        isolated JavaScriptRuntime,
         QuickJSEngine,
         [ManagedQuickJSValue]
     ) throws -> BindingInvocation
@@ -53,6 +79,8 @@ internal final class RegisteredBinding {
     internal let name: String
     internal let function: BoundFunction?
     internal let root: (any AnyObject & Sendable)?
+    internal let parentBindingIdentifier: UInt64?
+    internal let runtimeRootIdentifier: UInt64?
     internal var exposedValue: ManagedQuickJSValue?
     internal var isActive = true
     internal var activeOperations: Set<UInt64> = []
@@ -62,12 +90,16 @@ internal final class RegisteredBinding {
         identifier: UInt64,
         name: String,
         function: BoundFunction?,
-        root: (any AnyObject & Sendable)? = nil
+        root: (any AnyObject & Sendable)? = nil,
+        parentBindingIdentifier: UInt64? = nil,
+        runtimeRootIdentifier: UInt64? = nil
     ) {
         self.identifier = identifier
         self.name = name
         self.function = function
         self.root = root
+        self.parentBindingIdentifier = parentBindingIdentifier
+        self.runtimeRootIdentifier = runtimeRootIdentifier
     }
 }
 
@@ -184,7 +216,8 @@ extension QuickJSEngine {
     internal func registerExport(
         named name: String,
         documentation: TypeScriptDocumentation?,
-        root: any AnyObject & Sendable,
+        root: (any AnyObject & Sendable)?,
+        runtimeRootIdentifier: UInt64? = nil,
         members: [JavaScriptExportMemberDefinition],
         settle: @escaping BindingSettlement
     ) throws -> (UInt64, EngineJavaScriptValue) {
@@ -200,7 +233,8 @@ extension QuickJSEngine {
             identifier: exportIdentifier,
             name: name,
             function: nil,
-            root: root
+            root: root,
+            runtimeRootIdentifier: runtimeRootIdentifier
         )
         swiftBindings[exportIdentifier] = exportRecord
         var createdChildren: [UInt64] = []
@@ -221,7 +255,8 @@ extension QuickJSEngine {
                         identifier: childIdentifier,
                         name: member.name,
                         function: boundFunction,
-                        root: root
+                        root: root,
+                        parentBindingIdentifier: exportIdentifier
                     )
                     swiftBindings[childIdentifier] = child
                     createdChildren.append(childIdentifier)
@@ -240,6 +275,70 @@ extension QuickJSEngine {
                         value: rawFunction.raw,
                         flags: 0
                     )
+                case let .runtimeFunction(definition):
+                    let childIdentifier = try allocateBindingIdentifier()
+                    let boundFunction = definition.bind(
+                        location: .objectExport(name: name),
+                        order: UInt64(memberOrder),
+                        settle: settle
+                    )
+                    let child = RegisteredBinding(
+                        identifier: childIdentifier,
+                        name: member.name,
+                        function: boundFunction,
+                        parentBindingIdentifier: exportIdentifier
+                    )
+                    swiftBindings[childIdentifier] = child
+                    createdChildren.append(childIdentifier)
+                    let rawFunction = try makeBoundFunction(
+                        bindingIdentifier: childIdentifier,
+                        name: member.name,
+                        length: boundFunction.description.parameters.count
+                    )
+                    child.exposedValue = ManagedQuickJSValue(
+                        JS_DupValue(context, rawFunction.raw),
+                        in: context
+                    )
+                    try defineProperty(
+                        member.name,
+                        on: object.raw,
+                        value: rawFunction.raw,
+                        flags: 0
+                    )
+                case let .property(_, getter, setter):
+                    let identifiers = try defineBoundProperty(
+                        member.name,
+                        on: object.raw,
+                        getter: getter.bind(
+                            location: .objectExport(name: name),
+                            order: UInt64(memberOrder * 2),
+                            settle: settle
+                        ),
+                        setter: setter?.bind(
+                            location: .objectExport(name: name),
+                            order: UInt64(memberOrder * 2 + 1),
+                            settle: settle
+                        ),
+                        parentBindingIdentifier: exportIdentifier
+                    )
+                    createdChildren.append(contentsOf: identifiers)
+                case let .runtimeProperty(_, getter, setter):
+                    let identifiers = try defineBoundProperty(
+                        member.name,
+                        on: object.raw,
+                        getter: getter.bind(
+                            location: .objectExport(name: name),
+                            order: UInt64(memberOrder * 2),
+                            settle: settle
+                        ),
+                        setter: setter?.bind(
+                            location: .objectExport(name: name),
+                            order: UInt64(memberOrder * 2 + 1),
+                            settle: settle
+                        ),
+                        parentBindingIdentifier: exportIdentifier
+                    )
+                    createdChildren.append(contentsOf: identifiers)
                 case let .value(_, encode):
                     let value = try encode(self)
                     try defineProperty(
@@ -430,7 +529,8 @@ extension QuickJSEngine {
     fileprivate func invokeBinding(
         identifier: UInt64,
         arguments: UnsafeMutablePointer<JSValue>?,
-        count: Int
+        count: Int,
+        isolatedRuntime: isolated JavaScriptRuntime
     ) -> JSValue {
         let isOutermostCallback = callbackDepth == 0
         if isOutermostCallback {
@@ -465,13 +565,14 @@ extension QuickJSEngine {
             )
         }
         do {
-            switch try function.invoke(self, ownedArguments) {
+            switch try function.invoke(isolatedRuntime, self, ownedArguments) {
             case let .synchronous(value):
                 return JS_DupValue(context, value.raw)
             case let .asynchronous(operation):
                 return try beginSwiftPromise(
                     binding: binding,
                     operation: operation,
+                    isolatedRuntime: isolatedRuntime,
                     settle: function.settle
                 )
             }
@@ -488,7 +589,10 @@ extension QuickJSEngine {
 
     private func beginSwiftPromise(
         binding: RegisteredBinding,
-        operation: @escaping @Sendable () async -> BindingCompletion,
+        operation: @escaping @Sendable (
+            isolated JavaScriptRuntime
+        ) async -> BindingCompletion,
+        isolatedRuntime: isolated JavaScriptRuntime,
         settle: @escaping BindingSettlement
     ) throws -> JSValue {
         let operationIdentifier = try allocateOperationIdentifier()
@@ -507,8 +611,9 @@ extension QuickJSEngine {
             task: nil
         )
         binding.activeOperations.insert(operationIdentifier)
-        let task = Task {
-            let completion = await operation()
+        let task = Task { [weak isolatedRuntime] in
+            guard let isolatedRuntime else { return }
+            let completion = await isolatedRuntime.performBindingOperation(operation)
             await settle(operationIdentifier, completion)
         }
         pendingSwiftPromises[operationIdentifier]?.task = task
@@ -555,8 +660,18 @@ extension QuickJSEngine {
     }
 
     private func discardBindingIfFinished(_ binding: RegisteredBinding) {
-        guard !binding.isActive, binding.activeOperations.isEmpty else { return }
+        guard !binding.isActive,
+              binding.activeOperations.isEmpty,
+              binding.childBindingIdentifiers.isEmpty else { return }
         swiftBindings.removeValue(forKey: binding.identifier)
+        if let parentIdentifier = binding.parentBindingIdentifier,
+           let parent = swiftBindings[parentIdentifier] {
+            parent.childBindingIdentifiers.removeAll { $0 == binding.identifier }
+            discardBindingIfFinished(parent)
+        }
+        if let rootIdentifier = binding.runtimeRootIdentifier {
+            releaseRuntimeRoot(rootIdentifier)
+        }
     }
 
     internal func makeBoundFunction(
@@ -602,6 +717,80 @@ extension QuickJSEngine {
             )
         }
         guard status >= 0 else { throw extractException() }
+    }
+
+    internal func defineBoundProperty(
+        _ name: String,
+        on object: JSValue,
+        getter: BoundFunction,
+        setter: BoundFunction?,
+        parentBindingIdentifier: UInt64? = nil
+    ) throws -> [UInt64] {
+        var identifiers: [UInt64] = []
+        do {
+            let getterIdentifier = try allocateBindingIdentifier()
+            let getterRecord = RegisteredBinding(
+                identifier: getterIdentifier,
+                name: name,
+                function: getter,
+                parentBindingIdentifier: parentBindingIdentifier
+            )
+            swiftBindings[getterIdentifier] = getterRecord
+            identifiers.append(getterIdentifier)
+            let getterValue = try makeBoundFunction(
+                bindingIdentifier: getterIdentifier,
+                name: "get \(name)",
+                length: 0
+            )
+            getterRecord.exposedValue = ManagedQuickJSValue(
+                JS_DupValue(context, getterValue.raw),
+                in: context
+            )
+
+            var setterValue = ManagedQuickJSValue(quickJSUndefined(), in: context)
+            if let setter {
+                let setterIdentifier = try allocateBindingIdentifier()
+                let setterRecord = RegisteredBinding(
+                    identifier: setterIdentifier,
+                    name: name,
+                    function: setter,
+                    parentBindingIdentifier: parentBindingIdentifier
+                )
+                swiftBindings[setterIdentifier] = setterRecord
+                identifiers.append(setterIdentifier)
+                setterValue = try makeBoundFunction(
+                    bindingIdentifier: setterIdentifier,
+                    name: "set \(name)",
+                    length: 1
+                )
+                setterRecord.exposedValue = ManagedQuickJSValue(
+                    JS_DupValue(context, setterValue.raw),
+                    in: context
+                )
+            }
+
+            let atom = name.withCString { JS_NewAtom(context, $0) }
+            defer { JS_FreeAtom(context, atom) }
+            let status = JS_DefinePropertyGetSet(
+                context,
+                object,
+                atom,
+                JS_DupValue(context, getterValue.raw),
+                JS_DupValue(context, setterValue.raw),
+                Int32(JS_PROP_ENUMERABLE)
+            )
+            guard status >= 0 else { throw extractException() }
+            return identifiers
+        } catch {
+            for identifier in identifiers {
+                swiftBindings.removeValue(forKey: identifier)
+            }
+            throw error
+        }
+    }
+
+    internal func globalObject() -> ManagedQuickJSValue {
+        ManagedQuickJSValue(JS_GetGlobalObject(context), in: context)
     }
 
     internal func throwJavaScriptError(name: String, message: String) -> JSValue {
@@ -693,17 +882,25 @@ private let quickJSKitBindingTrampoline: @convention(c) (
         return quickJSUndefined()
     }
     let bridge = Unmanaged<QuickJSRuntimeBridge>.fromOpaque(opaque).takeUnretainedValue()
-    guard let engine = bridge.engine else { return quickJSUndefined() }
+    guard let engine = bridge.engine,
+          let owner = bridge.owner else { return quickJSUndefined() }
     var identifier: Int64 = 0
     guard JS_ToInt64(context, &identifier, functionData[0]) == 0, identifier > 0 else {
         engine.clearPendingException()
         return quickJSUndefined()
     }
-    return engine.invokeBinding(
-        identifier: UInt64(identifier),
-        arguments: arguments,
-        count: Int(argumentCount)
-    )
+    let argumentAddress = arguments.map { UInt(bitPattern: $0) }
+    return owner.assumeIsolated { isolatedRuntime in
+        let isolatedArguments = argumentAddress.flatMap {
+            UnsafeMutablePointer<JSValue>(bitPattern: $0)
+        }
+        return isolatedRuntime.engine.invokeBinding(
+            identifier: UInt64(identifier),
+            arguments: isolatedArguments,
+            count: Int(argumentCount),
+            isolatedRuntime: isolatedRuntime
+        )
+    }
 }
 
 internal let quickJSKitPromiseRejectionTracker: @convention(c) (

@@ -357,6 +357,89 @@ Each runtime is transferred permanently and replenished in the background.
 QuickJSKit does not reset, return, or reuse an arbitrarily mutated heap; a
 general-purpose leasing pool remains application-owned.
 
+## Compile-time exports and runtime-local Swift state
+
+Macros are an optional product. Applications opt in without adding the macro
+plugin to QuickJSKit's core runtime:
+
+```swift
+import QuickJSKit
+import QuickJSKitMacros
+
+/// State owned by exactly one JavaScript runtime.
+@JavaScriptExport
+final class Counter {
+    /// The current count.
+    var count: Int = 0
+
+    /// Adds an amount to the count.
+    ///
+    /// - Parameter amount: The amount to add.
+    /// - Returns: The updated count.
+    func increment(_ amount: Int) -> Int {
+        count += amount
+        return count
+    }
+}
+
+let template = try JavaScriptRuntimeTemplate {
+    RuntimeInstance(factory: { Counter() }) {
+        RuntimeObject(as: "counter")
+    }
+}
+```
+
+The factory fixes the runtime-local root type, so macro-generated destinations
+do not repeat `Counter.self`. The same definition can be installed wherever it
+is useful while preserving its generated TSDoc and TypeScript metadata:
+
+```swift
+RuntimeInstance(factory: { Counter() }) {
+    RuntimeGlobals()
+    RuntimeObject(as: "counter")
+    RuntimeModule("host:counter")
+}
+```
+
+Generated modules accept method-only surfaces; expose live properties through
+a global or object destination.
+
+The `sending` factory result may be a non-`Sendable` final class. QuickJSKit
+invokes the factory on the destination runtime actor, stores the root in an
+actor-owned registry, and gives callbacks only its runtime-local identifier.
+Synchronous members remain confined there. Async members of non-`Sendable`
+classes must be `nonisolated(nonsending)` or use the explicit
+`runtimeIsolated:` API so Swift can prove they do not cross executors. Shared
+objects still require `Sendable`.
+
+`@JavaScriptExport` discovers compatible methods and properties declared in
+the annotated actor or final class. `@JavaScriptIgnore`,
+`@JavaScriptName("name")`, and `@JavaScriptReadOnly` make selection explicit.
+Live properties are enumerable, non-configurable accessors; actor-isolated
+getters produce native JavaScript promises.
+
+`@TypeScriptModel` synthesizes the same `TypeScriptSchemaProviding` records as
+handwritten schemas for Codable structs, final classes, and raw string or
+integer enums:
+
+```swift
+@TypeScriptModel(scope: .namespace("Acme.Models"))
+struct User: Codable, Sendable {
+    /// The stable user identifier.
+    let id: Int
+
+    /// The display name.
+    let name: String
+}
+```
+
+Macro documentation is parsed from Swift documentation comments into
+structured TSDoc. Generated workspaces include
+`quickjskit.generated.d.ts.map` by default, using logical Swift file IDs rather
+than build-machine paths. Use `typeScriptDeclarationBundle()` for the detached
+declaration and Source Map v3 pair, or set workspace `sourceMapOptions` to
+`nil` to omit maps.
+
 ## TypeScript declarations and IDE workspaces
 
 Swift models opt into structural declarations explicitly. The schema is an
@@ -516,17 +599,17 @@ runtime destruction.
 
 ## Current scope
 
-Phase 6 provides evaluation, live values, direct `Codable` conversion, typed
+Phase 7 provides evaluation, live values, direct `Codable` conversion, typed
 Swift bindings and exports, native Promise interoperability, scoped runtime
 access, execution controls, ES and Swift modules, custom asynchronous loading,
 memory observability, explicit TypeScript schemas, detached environment
 snapshots, deterministic declarations, and managed IDE workspaces.
 
 It also provides declarative runtime templates, per-runtime Swift factories,
-and private source-canonical module compilation caching. Macros,
-reflection-based exports, declaration source maps, computed properties,
-workers, and `AbortSignal` integration remain deliberate future phases. See
-[Architecture](Documentation/Architecture.md), the
+private source-canonical module compilation caching, optional compile-time
+exports and model schemas, live accessor properties, and declaration source
+maps. Runtime reflection, workers, and `AbortSignal` integration remain
+deliberate future phases. See [Architecture](Documentation/Architecture.md), the
 [decision records](Documentation/Decisions), and [AGENTS.md](AGENTS.md) before
 contributing.
 

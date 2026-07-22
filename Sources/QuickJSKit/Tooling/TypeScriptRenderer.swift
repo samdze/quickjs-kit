@@ -165,7 +165,8 @@ internal struct TypeScriptRenderer {
                 value.documentation,
                 at: "exported value '\(objectName).\(value.name)'"
             )
-            let declaration = "readonly \(propertyKey(value.name)): "
+            let readonly = value.isReadOnly ? "readonly " : ""
+            let declaration = "\(readonly)\(propertyKey(value.name)): "
                 + "\(try render(value.type, from: .global, resolved: resolved));"
             return [declarationDocumentation, declaration].compactMap { $0 }.joined(separator: "\n")
         }

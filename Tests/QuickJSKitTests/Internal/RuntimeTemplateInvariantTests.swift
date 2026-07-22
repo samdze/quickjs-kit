@@ -5,8 +5,8 @@ import Testing
 struct RuntimeTemplateInvariantTests {
     @Test("registered module source is compiled once and read into every runtime")
     func moduleArtifactsAreReused() async throws {
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.registerModule(
+        let template = try JavaScriptRuntimeTemplate {
+            SourceModule(
                 "export const answer = 42",
                 as: "cached:answer"
             )
@@ -31,8 +31,8 @@ struct RuntimeTemplateInvariantTests {
     @Test("prepared program bytecode is read independently into every runtime")
     func programArtifactsAreReused() async throws {
         let program = JavaScriptProgram("40 + 2", sourceURL: "Scripts/answer.js")
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.prepare(program)
+        let template = try JavaScriptRuntimeTemplate {
+            Prepare(program)
         }
         #expect(template.compiledProgramArtifactCountForTesting == 1)
 
@@ -58,16 +58,18 @@ struct RuntimeTemplateInvariantTests {
             "globalThis.didStart = hostAnswer()",
             sourceURL: "Scripts/start.js"
         )
-        let original = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: {
+        let original = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: {
                 await probe.recordCreation()
                 return Root()
-            }) { instance in
-                instance.globals { globals in
-                    globals.function("hostAnswer") { (_: Root) -> Int in 42 }
+            }) {
+                RuntimeGlobals {
+                    InstanceFunction("hostAnswer") { (_: Root) -> Int in 42 }
                 }
             }
-            template.runAtStartup(program)
+            Startup {
+                Run(program)
+            }
         }
         let template = original.corruptingFirstCompiledProgramForTesting()
 
@@ -83,17 +85,17 @@ struct RuntimeTemplateInvariantTests {
     @Test("static template publication uses one destination engine entry")
     func staticPublicationUsesOneEngineEntry() async throws {
         let program = JavaScriptProgram("42")
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.function("first") { 1 }
-                globals.function("second") { 2 }
-                globals.value(3, as: "third")
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                Function("first") { 1 }
+                Function("second") { 2 }
+                Value(3, as: "third")
             }
-            template.defineModule("host:values") { module in
-                module.value(4, as: "fourth")
+            SwiftModule("host:values") {
+                Value(4, as: "fourth")
             }
-            template.registerModule("export const fifth = 5", as: "app:values")
-            template.prepare(program)
+            SourceModule("export const fifth = 5", as: "app:values")
+            Prepare(program)
         }
 
         let runtime = try await template.makeRuntime()
@@ -103,15 +105,15 @@ struct RuntimeTemplateInvariantTests {
 
     @Test("cached modules preserve relative imports and execute only on import")
     func cachedModulesPreserveNativeSemantics() async throws {
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.value(0, as: "moduleExecutions")
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                Value(0, as: "moduleExecutions")
             }
-            template.registerModule(
+            SourceModule(
                 "export const base = 40",
                 as: "app/base.js"
             )
-            template.registerModule(
+            SourceModule(
                 """
                 import { base } from './base.js';
                 globalThis.moduleExecutions += 1;
@@ -137,17 +139,17 @@ struct RuntimeTemplateInvariantTests {
     @Test("an unreadable artifact retries from canonical source before factories run")
     func invalidArtifactFallsBackToSource() async throws {
         let probe = FactoryProbe()
-        let original = try JavaScriptRuntimeTemplate { template in
-            template.registerModule(
+        let original = try JavaScriptRuntimeTemplate {
+            SourceModule(
                 "export const answer = 42",
                 as: "cached:fallback"
             )
-            template.instance(factory: {
+            RuntimeInstance(factory: {
                 await probe.recordCreation()
                 return Root()
-            }) { instance in
-                instance.globals { globals in
-                    globals.function("hostAnswer") { (_: Root) -> Int in 42 }
+            }) {
+                RuntimeGlobals {
+                    InstanceFunction("hostAnswer") { (_: Root) -> Int in 42 }
                 }
             }
         }
@@ -169,16 +171,16 @@ struct RuntimeTemplateInvariantTests {
         let probe = FactoryProbe()
 
         #expect(throws: JavaScriptError.self) {
-            _ = try JavaScriptRuntimeTemplate { template in
-                template.globals { globals in
-                    globals.value(1, as: "duplicate")
+            _ = try JavaScriptRuntimeTemplate {
+                Globals {
+                    Value(1, as: "duplicate")
                 }
-                template.instance(factory: {
+                RuntimeInstance(factory: {
                     await probe.recordCreation()
                     return Root()
-                }) { instance in
-                    instance.globals { globals in
-                        globals.value(as: "duplicate") { _ in 2 }
+                }) {
+                    RuntimeGlobals {
+                        InstanceValue(as: "duplicate") { _ in 2 }
                     }
                 }
             }
@@ -190,12 +192,17 @@ struct RuntimeTemplateInvariantTests {
     func templatesRejectLiveValues() async throws {
         let runtime = try JavaScriptRuntime()
         let live = try await runtime.evaluate("({ answer: 42 })")
+        let component: JavaScriptRuntimeTemplate.Component = {
+            var builder = JavaScriptExportBuilder()
+            builder.value(live, as: "live")
+            var component = JavaScriptRuntimeTemplate.Component()
+            component.definitions = [.globals(builder.members)]
+            return component
+        }()
 
         #expect(throws: JavaScriptError.self) {
-            _ = try JavaScriptRuntimeTemplate { template in
-                template.globals { globals in
-                    globals.value(live, as: "live")
-                }
+            _ = try JavaScriptRuntimeTemplate {
+                component
             }
         }
     }
@@ -203,8 +210,8 @@ struct RuntimeTemplateInvariantTests {
     @Test("registered source syntax is validated before runtime creation")
     func sourceSyntaxIsValidatedEarly() {
         #expect(throws: JavaScriptError.self) {
-            _ = try JavaScriptRuntimeTemplate { template in
-                template.registerModule(
+            _ = try JavaScriptRuntimeTemplate {
+                SourceModule(
                     "export const = broken",
                     as: "invalid:syntax",
                     sourceURL: "Scripts/invalid.js"
@@ -221,8 +228,8 @@ struct RuntimeTemplateInvariantTests {
         )
 
         #expect(throws: JavaScriptError.self) {
-            _ = try JavaScriptRuntimeTemplate { template in
-                template.prepare(invalid)
+            _ = try JavaScriptRuntimeTemplate {
+                Prepare(invalid)
             }
         }
     }
@@ -230,19 +237,19 @@ struct RuntimeTemplateInvariantTests {
     @Test("factory groups are created sequentially in declaration order")
     func factoriesUseDeclarationOrder() async throws {
         let recorder = FactoryOrderRecorder()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: {
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: {
                 await recorder.append(1)
                 return Root()
-            }) { _ in }
-            template.instance(factory: {
+            }) {}
+            RuntimeInstance(factory: {
                 await recorder.append(2)
                 return Root()
-            }) { _ in }
-            template.instance(factory: {
+            }) {}
+            RuntimeInstance(factory: {
                 await recorder.append(3)
                 return Root()
-            }) { _ in }
+            }) {}
         }
 
         _ = try await template.makeRuntime()
@@ -253,14 +260,14 @@ struct RuntimeTemplateInvariantTests {
     func factoryFailureReleasesRoot() async throws {
         enum ExpectedFailure: Error { case failed }
         let tracker = WeakRootTracker()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: {
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: {
                 let root = Root()
                 await tracker.record(root)
                 return root
-            }) { instance in
-                instance.globals { globals in
-                    globals.value(as: "failure") { (_: Root) async throws -> Int in
+            }) {
+                RuntimeGlobals {
+                    InstanceValue(as: "failure") { (_: Root) async throws -> Int in
                         throw ExpectedFailure.failed
                     }
                 }
@@ -277,14 +284,14 @@ struct RuntimeTemplateInvariantTests {
     @Test("cancellation after a factory returns releases its unpublished root")
     func cancellationReleasesFactoryRoot() async throws {
         let gate = CancellableFactoryGate()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: {
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: {
                 let root = Root()
                 await gate.pause(root)
                 return root
-            }) { instance in
-                instance.globals { globals in
-                    globals.function("answer") { (_: Root) -> Int in 42 }
+            }) {
+                RuntimeGlobals {
+                    InstanceFunction("answer") { (_: Root) -> Int in 42 }
                 }
             }
         }

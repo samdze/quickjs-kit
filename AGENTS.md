@@ -382,6 +382,7 @@ happy path.
 ### Phase 6 — runtime templates and provisioning (completed)
 
 - Immutable declarative templates that create independently isolated runtimes.
+- Concrete Result Builder declarations with conditional and repeated composition.
 - Shared Sendable definitions and typed per-runtime Swift root factories.
 - Environment and TypeScript snapshots without constructing QuickJS.
 - Private source-canonical compile-only module artifacts with safe fallback.

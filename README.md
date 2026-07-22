@@ -235,22 +235,22 @@ object. The template never shares JavaScript objects between them.
 ```swift
 let template = try JavaScriptRuntimeTemplate(
     configuration: .init(memoryLimit: 32 * 1_024 * 1_024)
-) { template in
-    template.globals { globals in
-        globals.function("sum") { (left: Int, right: Int) in
+) {
+    Globals {
+        Function("sum") { (left: Int, right: Int) in
             left + right
         }
-        globals.value("1.0", as: "hostVersion")
+        Value("1.0", as: "hostVersion")
     }
 
-    template.defineModule("host:math") { module in
-        module.function("double") { (value: Int) in value * 2 }
+    SwiftModule("host:math") {
+        Function("double") { (value: Int) in value * 2 }
     }
 
-    template.registerModule(
+    SourceModule(
         "export const answer = 42;",
         as: "app:answer",
-        typeScriptDeclarations: .init("export const answer: number;")
+        declarations: .init("export const answer: number;")
     )
 }
 
@@ -259,22 +259,27 @@ async let second = template.makeRuntime()
 let (firstRuntime, secondRuntime) = try await (first, second)
 ```
 
+The template closure is a concrete Result Builder. Components are flattened
+immediately into the canonical provisioning definitions, so ordinary `if`,
+`switch`, `for`, optional, and availability branches can compose an environment
+without creating a retained generic syntax tree.
+
 Shared `Sendable` actors and closures can be captured directly. When every
 runtime needs distinct Swift state, declare one asynchronous factory and use
 its root across globals, objects, and Swift modules:
 
 ```swift
-let template = try JavaScriptRuntimeTemplate { template in
-    template.instance(factory: { Storage() }) { instance in
-        instance.export(as: "storage") { export in
-            export.function("read") { storage, key in
+let template = try JavaScriptRuntimeTemplate {
+    RuntimeInstance(factory: { Storage() }) {
+        RuntimeObject(as: "storage") {
+            InstanceFunction("read") { storage, key in
                 try await storage.read(key)
             }
-            export.value(as: "version") { _ in "1.0" }
+            InstanceValue(as: "version") { _ in "1.0" }
         }
 
-        instance.defineModule("host:storage") { module in
-            module.function("remove") { storage, key in
+        RuntimeModule("host:storage") {
+            InstanceFunction("remove") { storage, key in
                 try await storage.remove(key)
             }
         }
@@ -303,18 +308,21 @@ let bootstrap = JavaScriptProgram(
     sourceURL: "Scripts/bootstrap.js"
 )
 
-let template = try JavaScriptRuntimeTemplate { template in
-    template.globals { globals in
-        globals.function("initializeHost") { () async -> Bool in true }
+let template = try JavaScriptRuntimeTemplate {
+    Globals {
+        Function("initializeHost") { () async -> Bool in true }
     }
-    template.registerModule("export const shared = true", as: "app:shared")
-    template.registerModule(
+    SourceModule("export const shared = true", as: "app:shared")
+    SourceModule(
         "import { shared } from 'app:shared'; export { shared }",
         as: "app:main"
     )
-    template.runAtStartup(bootstrap)
-    template.preloadModule("app:shared")
-    template.importModuleAtStartup("app:main")
+    Prepare(bootstrap)
+    Startup {
+        Run(bootstrap)
+        PreloadModule("app:shared")
+        ImportModule("app:main")
+    }
 }
 ```
 

@@ -1,56 +1,113 @@
-/// Describes JavaScript surfaces backed by one per-runtime Swift root.
-public struct JavaScriptRuntimeInstanceBuilder<Root: AnyObject & Sendable> {
-    internal var destinations: [RuntimeInstanceDestination<Root>] = []
+extension JavaScriptRuntimeTemplate {
+    /// Composes JavaScript destinations backed by one per-runtime Swift root.
+    @resultBuilder
+    public enum InstanceBuilder<Root: AnyObject & Sendable> {
+        /// Accepts one contextual per-runtime destination.
+        internal static func buildExpression(
+            _ expression: Instance<Root>
+        ) -> Instance<Root> {
+            expression
+        }
 
-    internal init() {}
+        /// Combines destinations in lexical order.
+        public static func buildBlock(
+            _ components: Instance<Root>...
+        ) -> Instance<Root> {
+            Instance.merging(components)
+        }
 
-    /// Adds root-backed functions and snapshot values to the global object.
-    public mutating func globals(
-        _ configure: @Sendable (
-            inout JavaScriptInstanceExportBuilder<Root>
-        ) -> Void
-    ) {
-        var builder = JavaScriptInstanceExportBuilder<Root>()
-        configure(&builder)
-        destinations.append(.globals(builder.members))
+        /// Includes destinations produced by an optional branch.
+        public static func buildOptional(
+            _ component: Instance<Root>?
+        ) -> Instance<Root> {
+            component ?? Instance()
+        }
+
+        /// Selects the first branch of a conditional destination.
+        public static func buildEither(
+            first component: Instance<Root>
+        ) -> Instance<Root> {
+            component
+        }
+
+        /// Selects the second branch of a conditional destination.
+        public static func buildEither(
+            second component: Instance<Root>
+        ) -> Instance<Root> {
+            component
+        }
+
+        /// Flattens destinations produced by a loop.
+        public static func buildArray(
+            _ components: [Instance<Root>]
+        ) -> Instance<Root> {
+            Instance.merging(components)
+        }
+
+        /// Preserves destinations guarded by an availability check.
+        public static func buildLimitedAvailability(
+            _ component: Instance<Root>
+        ) -> Instance<Root> {
+            component
+        }
     }
 
-    /// Adds a named object whose members use the per-runtime root.
-    public mutating func export(
-        as name: String,
-        documentation: TypeScriptDocumentation? = nil,
-        _ configure: @Sendable (
-            inout JavaScriptInstanceExportBuilder<Root>
-        ) -> Void
-    ) {
-        var builder = JavaScriptInstanceExportBuilder<Root>()
-        configure(&builder)
-        destinations.append(
-            .object(
-                name: name,
-                documentation: documentation,
-                members: builder.members
-            )
-        )
-    }
+    /// One or more JavaScript destinations backed by a per-runtime Swift root.
+    public struct Instance<Root: AnyObject & Sendable>: Sendable {
+        internal var destinations: [RuntimeInstanceDestination<Root>] = []
 
-    /// Adds a Swift-defined module whose exports use the per-runtime root.
-    public mutating func defineModule(
-        _ specifier: String,
-        documentation: TypeScriptDocumentation? = nil,
-        _ configure: @Sendable (
-            inout JavaScriptInstanceExportBuilder<Root>
-        ) -> Void
-    ) {
-        var builder = JavaScriptInstanceExportBuilder<Root>()
-        configure(&builder)
-        destinations.append(
-            .module(
-                specifier: specifier,
-                documentation: documentation,
-                members: builder.members
+        internal init() {}
+
+        /// Declares root-backed functions and values on the global object.
+        internal static func globals(
+            @InstanceExportBuilder<Root> _ content: @Sendable () -> InstanceExport<Root>
+        ) -> Self {
+            var instance = Self()
+            instance.destinations.append(.globals(content().members))
+            return instance
+        }
+
+        /// Declares a named object backed by the per-runtime root.
+        internal static func export(
+            as name: String,
+            documentation: TypeScriptDocumentation? = nil,
+            @InstanceExportBuilder<Root> _ content: @Sendable () -> InstanceExport<Root>
+        ) -> Self {
+            var instance = Self()
+            instance.destinations.append(
+                .object(
+                    name: name,
+                    documentation: documentation,
+                    members: content().members
+                )
             )
-        )
+            return instance
+        }
+
+        /// Declares a Swift-defined module backed by the per-runtime root.
+        internal static func module(
+            _ specifier: String,
+            documentation: TypeScriptDocumentation? = nil,
+            @InstanceExportBuilder<Root> _ content: @Sendable () -> InstanceExport<Root>
+        ) -> Self {
+            var instance = Self()
+            instance.destinations.append(
+                .module(
+                    specifier: specifier,
+                    documentation: documentation,
+                    members: content().members
+                )
+            )
+            return instance
+        }
+
+        internal static func merging(_ components: [Self]) -> Self {
+            var result = Self()
+            for component in components {
+                result.destinations.append(contentsOf: component.destinations)
+            }
+            return result
+        }
     }
 }
 

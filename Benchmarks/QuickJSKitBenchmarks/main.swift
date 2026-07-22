@@ -91,13 +91,17 @@ struct QuickJSKitBenchmarks {
         let repeatedImportRuntime = try await template.makeRuntime()
         _ = try await repeatedImportRuntime.importModule("benchmark:module")
 
-        let linkedTemplate = try JavaScriptRuntimeTemplate { template in
-            template.registerModule(source, as: "benchmark:module")
-            template.preloadModule("benchmark:module")
+        let linkedTemplate = try JavaScriptRuntimeTemplate {
+            SourceModule(source, as: "benchmark:module")
+            Startup {
+                PreloadModule("benchmark:module")
+            }
         }
-        let startedTemplate = try JavaScriptRuntimeTemplate { template in
-            template.registerModule(source, as: "benchmark:module")
-            template.importModuleAtStartup("benchmark:module")
+        let startedTemplate = try JavaScriptRuntimeTemplate {
+            SourceModule(source, as: "benchmark:module")
+            Startup {
+                ImportModule("benchmark:module")
+            }
         }
         let bindingTemplates = try [1, 10, 100].map(makeBindingTemplate)
         let provisioner = try JavaScriptRuntimeProvisioner(
@@ -259,23 +263,23 @@ struct QuickJSKitBenchmarks {
     private static func equivalentTemplate(
         source: String
     ) throws -> JavaScriptRuntimeTemplate {
-        try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.function("sum") {
+        try JavaScriptRuntimeTemplate {
+            Globals {
+                Function("sum") {
                     (left: Int, right: Int) in left + right
                 }
             }
-            template.registerModule(source, as: "benchmark:module")
+            SourceModule(source, as: "benchmark:module")
         }
     }
 
     private static func makeBindingTemplate(
         count: Int
     ) throws -> JavaScriptRuntimeTemplate {
-        try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
+        try JavaScriptRuntimeTemplate {
+            Globals {
                 for index in 0..<count {
-                    globals.function("function\(index)") {
+                    Function("function\(index)") {
                         (value: Int) in value + index
                     }
                 }

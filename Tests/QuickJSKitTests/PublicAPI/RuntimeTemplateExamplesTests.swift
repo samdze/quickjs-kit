@@ -6,29 +6,29 @@ struct RuntimeTemplateExamplesTests {
     @Test("a template installs globals objects and modules into an independent runtime")
     func templateInstallsCompleteEnvironment() async throws {
         let shared = SharedGreeting()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.function(
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                Function(
                     "sum",
                     options: .init(parameterNames: ["left", "right"])
                 ) { (left: Int, right: Int) in
                     left + right
                 }
-                globals.value("1.0", as: "version")
+                Value("1.0", as: "version")
             }
-            template.export(shared, as: "greeting") { shared, export in
-                export.function("message") { () async -> String in
+            SharedObject(shared, as: "greeting") { shared in
+                Function("message") { () async -> String in
                     await shared.message()
                 }
             }
-            template.defineModule("host:math") { module in
-                module.function("double") { (value: Int) in value * 2 }
+            SwiftModule("host:math") {
+                Function("double") { (value: Int) in value * 2 }
             }
-            template.registerModule(
+            SourceModule(
                 "export const answer = 42",
                 as: "app:answer",
                 sourceURL: "Scripts/answer.js",
-                typeScriptDeclarations: .init("export const answer: number;")
+                declarations: .init("export const answer: number;")
             )
         }
 
@@ -52,9 +52,9 @@ struct RuntimeTemplateExamplesTests {
     @Test("a template describes TypeScript tooling before creating a runtime")
     func templateDescribesToolingWithoutRuntime() async throws {
         let probe = FactoryProbe()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.function(
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                Function(
                     "lookup",
                     options: .init(
                         parameterNames: ["id"],
@@ -66,13 +66,12 @@ struct RuntimeTemplateExamplesTests {
                     )
                 ) { (id: Int) -> String in String(id) }
             }
-            template.instance(factory: {
+            RuntimeInstance(factory: {
                 await probe.recordCreation()
                 return Counter()
-            }) { instance in
-                instance.export(as: "counter", documentation: "An isolated counter.") {
-                    counter in
-                    counter.function("next") { (root: Counter) async -> Int in
+            }) {
+                RuntimeObject(as: "counter", documentation: "An isolated counter.") {
+                    InstanceFunction("next") { (root: Counter) async -> Int in
                         await root.next()
                     }
                 }
@@ -124,13 +123,13 @@ struct RuntimeTemplateExamplesTests {
 
     @Test("a per-runtime root can produce snapshot values")
     func factoryProducesSnapshotValues() async throws {
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { Counter(initialValue: 41) }) { instance in
-                instance.export(as: "counter") { counter in
-                    counter.value(as: "initial") { root in
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { Counter(initialValue: 41) }) {
+                RuntimeObject(as: "counter") {
+                    InstanceValue(as: "initial") { root in
                         await root.currentValue()
                     }
-                    counter.function("next") { (root: Counter) async -> Int in
+                    InstanceFunction("next") { (root: Counter) async -> Int in
                         await root.next()
                     }
                 }
@@ -148,22 +147,22 @@ struct RuntimeTemplateExamplesTests {
     @Test("root-aware functions preserve Swift effects and Void results")
     func rootAwareFunctionsPreserveEffects() async throws {
         enum ExpectedFailure: Error { case failed }
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { Counter() }) { instance in
-                instance.globals { globals in
-                    globals.function("syncValue") { (_: Counter) -> Int in 1 }
-                    globals.function("throwingValue") {
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { Counter() }) {
+                RuntimeGlobals {
+                    InstanceFunction("syncValue") { (_: Counter) -> Int in 1 }
+                    InstanceFunction("throwingValue") {
                         (_: Counter) throws -> Int in
                         throw ExpectedFailure.failed
                     }
-                    globals.function("asyncValue") { (_: Counter) async -> Int in 3 }
-                    globals.function("asyncThrowingValue") {
+                    InstanceFunction("asyncValue") { (_: Counter) async -> Int in 3 }
+                    InstanceFunction("asyncThrowingValue") {
                         (_: Counter) async throws -> Int in 4
                     }
-                    globals.function("syncVoid") { (_: Counter) -> Void in }
-                    globals.function("throwingVoid") { (_: Counter) throws -> Void in }
-                    globals.function("asyncVoid") { (_: Counter) async -> Void in }
-                    globals.function("asyncThrowingVoid") {
+                    InstanceFunction("syncVoid") { (_: Counter) -> Void in }
+                    InstanceFunction("throwingVoid") { (_: Counter) throws -> Void in }
+                    InstanceFunction("asyncVoid") { (_: Counter) async -> Void in }
+                    InstanceFunction("asyncThrowingVoid") {
                         (_: Counter) async throws -> Void in
                     }
                 }
@@ -198,9 +197,8 @@ struct RuntimeTemplateExamplesTests {
             defaultExecutionTimeout: .seconds(1)
         )
         let template = try JavaScriptRuntimeTemplate(configuration: configuration) {
-            template in
-            template.globals { globals in
-                globals.value("original", as: "name")
+            Globals {
+                Value("original", as: "name")
             }
         }
         let originalDescription = try template.environmentDescription()
@@ -216,8 +214,8 @@ struct RuntimeTemplateExamplesTests {
 
     @Test("template module loaders remain asynchronous and runtime-local")
     func templateInstallsModuleLoader() async throws {
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.moduleLoader(
+        let template = try JavaScriptRuntimeTemplate {
+            ModuleLoader(
                 .init { request in
                     JavaScriptModuleSource(
                         source: "export const name = '\(request.specifier)'",
@@ -234,21 +232,123 @@ struct RuntimeTemplateExamplesTests {
         #expect(name == "loaded:module")
     }
 
+    @Test("the template DSL composes conditional and repeated declarations")
+    func templateDSLComposesControlFlow() async throws {
+        struct Values: Decodable, Sendable, Equatable {
+            let answer: Int
+            let optionalValue: String
+            let firstValue: Int
+            let secondValue: Int
+            let selection: String
+            let available: Bool
+        }
+
+        let includeAnswer = true
+        let optionalName: String? = "optionalValue"
+        let repeatedNames = ["firstValue", "secondValue"]
+        let selectedValue = 2
+
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                if includeAnswer {
+                    Value(42, as: "answer")
+                }
+                if let optionalName {
+                    Value("present", as: optionalName)
+                }
+                for (index, name) in repeatedNames.enumerated() {
+                    Value(index + 1, as: name)
+                }
+                switch selectedValue {
+                case 1:
+                    Value("one", as: "selection")
+                default:
+                    Value("two", as: "selection")
+                }
+                if #available(macOS 14, *) {
+                    Value(true, as: "available")
+                }
+            }
+        }
+
+        let runtime = try await template.makeRuntime()
+        let values: Values = try await runtime.evaluate(
+            "({ answer, optionalValue, firstValue, secondValue, selection, available })"
+        )
+
+        #expect(
+            values == Values(
+                answer: 42,
+                optionalValue: "present",
+                firstValue: 1,
+                secondValue: 2,
+                selection: "two",
+                available: true
+            )
+        )
+    }
+
+    @Test("ordinary DSL functions preserve every Swift closure effect")
+    func ordinaryDSLFunctionsPreserveEffects() async throws {
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                Function("syncValue") { 1 }
+                Function("throwingValue") { () throws -> Int in 2 }
+                Function("asyncValue") { () async -> Int in 3 }
+                Function("asyncThrowingValue") { () async throws -> Int in 4 }
+                Function("syncVoid") { () -> Void in }
+                Function("throwingVoid") { () throws -> Void in }
+                Function("asyncVoid") { () async -> Void in }
+                Function("asyncThrowingVoid") { () async throws -> Void in }
+            }
+        }
+        let runtime = try await template.makeRuntime()
+
+        let values: [Int] = try await runtime.evaluate(
+            "Promise.all([syncValue(), throwingValue(), asyncValue(), asyncThrowingValue()])"
+        )
+        let voidValuesAreUndefined: Bool = try await runtime.evaluate(
+            "Promise.all([syncVoid(), throwingVoid(), asyncVoid(), asyncThrowingVoid()]).then(values => values.every(value => value === undefined))"
+        )
+
+        #expect(values == [1, 2, 3, 4])
+        #expect(voidValuesAreUndefined)
+    }
+
+    @Test("multiple startup groups preserve lexical action order")
+    func multipleStartupGroupsPreserveOrder() async throws {
+        let first = JavaScriptProgram("globalThis.startupOrder = ['first']")
+        let second = JavaScriptProgram("globalThis.startupOrder.push('second')")
+        let template = try JavaScriptRuntimeTemplate {
+            Startup {
+                Run(first)
+            }
+            Startup {
+                Run(second)
+            }
+        }
+
+        let runtime = try await template.makeRuntime()
+        let order: [String] = try await runtime.evaluate("startupOrder")
+
+        #expect(order == ["first", "second"])
+    }
+
     private func counterTemplate() throws -> JavaScriptRuntimeTemplate {
-        try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { Counter() }) { instance in
-                instance.globals { globals in
-                    globals.function("nextCounter") { (root: Counter) async -> Int in
+        try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { Counter() }) {
+                RuntimeGlobals {
+                    InstanceFunction("nextCounter") { (root: Counter) async -> Int in
                         await root.next()
                     }
                 }
-                instance.export(as: "counter") { counter in
-                    counter.function("next") { (root: Counter) async -> Int in
+                RuntimeObject(as: "counter") {
+                    InstanceFunction("next") { (root: Counter) async -> Int in
                         await root.next()
                     }
                 }
-                instance.defineModule("host:counter") { module in
-                    module.function("next") { (root: Counter) async -> Int in
+                RuntimeModule("host:counter") {
+                    InstanceFunction("next") { (root: Counter) async -> Int in
                         await root.next()
                     }
                 }

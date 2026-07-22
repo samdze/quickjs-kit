@@ -90,15 +90,17 @@ struct PreparedProgramExamplesTests {
             """,
             sourceURL: "Scripts/startup.js"
         )
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { StartupRoot() }) { instance in
-                instance.globals { globals in
-                    globals.function("startupValue") { (_: StartupRoot) async -> Int in
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { StartupRoot() }) {
+                RuntimeGlobals {
+                    InstanceFunction("startupValue") { (_: StartupRoot) async -> Int in
                         42
                     }
                 }
             }
-            template.runAtStartup(startup)
+            Startup {
+                Run(startup)
+            }
         }
 
         let runtime = try await template.makeRuntime()
@@ -109,30 +111,34 @@ struct PreparedProgramExamplesTests {
 
     @Test("templates distinguish linked modules from startup imports")
     func templatesDistinguishModulePreparation() async throws {
-        let preloaded = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.value(0, as: "executions")
+        let preloaded = try JavaScriptRuntimeTemplate {
+            Globals {
+                Value(0, as: "executions")
             }
-            template.registerModule(
+            SourceModule(
                 "globalThis.executions += 1; export const value = executions;",
                 as: "app:preloaded"
             )
-            template.preloadModule("app:preloaded")
+            Startup {
+                PreloadModule("app:preloaded")
+            }
         }
         let preloadedRuntime = try await preloaded.makeRuntime()
         let beforeImport: Int = try await preloadedRuntime.evaluate("executions")
         let preloadedModule = try await preloadedRuntime.importModule("app:preloaded")
         let afterImport: Int = try await preloadedModule.value(forExport: "value")
 
-        let started = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.value(0, as: "executions")
+        let started = try JavaScriptRuntimeTemplate {
+            Globals {
+                Value(0, as: "executions")
             }
-            template.registerModule(
+            SourceModule(
                 "globalThis.executions += 1; export function answer() { return 42; }",
                 as: "app:started"
             )
-            template.importModuleAtStartup("app:started")
+            Startup {
+                ImportModule("app:started")
+            }
         }
         let startedRuntime = try await started.makeRuntime()
         let startupExecutions: Int = try await startedRuntime.evaluate("executions")
@@ -148,15 +154,17 @@ struct PreparedProgramExamplesTests {
 
     @Test("startup module imports await top-level asynchronous initialization")
     func startupModuleAwaitsTopLevelInitialization() async throws {
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.registerModule(
+        let template = try JavaScriptRuntimeTemplate {
+            SourceModule(
                 """
                 export const answer = await Promise.resolve(42);
                 globalThis.topLevelStartupFinished = true;
                 """,
                 as: "app:async-startup"
             )
-            template.importModuleAtStartup("app:async-startup")
+            Startup {
+                ImportModule("app:async-startup")
+            }
         }
 
         let runtime = try await template.makeRuntime()
@@ -171,11 +179,13 @@ struct PreparedProgramExamplesTests {
     @Test("startup JavaScript does not change the declared tooling environment")
     func startupPreservesDeclaredEnvironment() async throws {
         let startup = JavaScriptProgram("globalThis.scriptOnlyValue = 42")
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.value("host", as: "declaredValue")
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                Value("host", as: "declaredValue")
             }
-            template.runAtStartup(startup)
+            Startup {
+                Run(startup)
+            }
         }
         let expected = try template.environmentDescription()
 

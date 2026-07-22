@@ -25,11 +25,13 @@ environment. See <doc:RuntimeTemplates>.
 
 - ``JavaScriptRuntime``
 - ``JavaScriptRuntimeTemplate``
-- ``JavaScriptRuntimeTemplateBuilder``
 - ``JavaScriptProgram``
 - ``JavaScriptRuntimeProvisioner``
-- ``JavaScriptRuntimeInstanceBuilder``
-- ``JavaScriptInstanceExportBuilder``
+- ``Globals``
+- ``Function``
+- ``Value``
+- ``RuntimeInstance``
+- ``Startup``
 
 ### JavaScript values
 

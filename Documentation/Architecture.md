@@ -430,6 +430,13 @@ metadata, and Swift factories are reusable state. Bound functions, live
 values, Promise capabilities, namespaces, registries, contexts, and heaps
 belong to exactly one created runtime.
 
+Template construction uses a concrete Result Builder DSL. Nominal components
+such as `Globals`, `Function`, `SwiftModule`, and `RuntimeInstance` eagerly
+lower into the same detached definitions used by immediate runtime APIs. The
+builder flattens conditionals and loops in lexical order and never retains a
+generic syntax tree. It is an ergonomic frontend, not a second binding,
+module, tooling, or provisioning architecture.
+
 Static definitions may capture shared `Sendable` actors or values. A typed
 per-runtime factory can instead produce one independent Swift root whose
 root-aware definitions span globals, object exports, and Swift modules. The
@@ -492,6 +499,7 @@ Sanitizers and warning-as-error builds are release gates, not optional cleanup.
 | Type metadata | Explicit schemas captured with canonical binding shapes | Runtime behavior stays valid without tooling metadata; strict generation remains honest |
 | Tooling | Immutable environment snapshots and pure deterministic rendering | Runtimes and future templates share one declaration model |
 | Provisioning | Immutable templates creating independent heaps | Reusable configuration does not weaken runtime isolation |
+| Template declarations | Concrete Result Builder components | Declarative composition adds no generic runtime tree or parallel definition system |
 | Module caching | Source-canonical private compile-only artifacts | High-volume creation avoids repeated parsing without exposing unsafe bytecode |
 | Program caching | Identity-based reusable programs with private artifacts | Known scripts avoid parsing while preserving source and independent heaps |
 | Hot provisioning | Bounded one-shot ready runtime supply | Acquisition is fast without reset contracts or shared mutable heaps |

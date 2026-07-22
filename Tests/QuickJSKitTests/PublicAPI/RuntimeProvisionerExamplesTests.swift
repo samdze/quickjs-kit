@@ -5,9 +5,9 @@ import Testing
 struct RuntimeProvisionerExamplesTests {
     @Test("a provisioner transfers ready independent runtimes and replenishes capacity")
     func provisionerTransfersIndependentRuntimes() async throws {
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.globals { globals in
-                globals.value("ready", as: "state")
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                Value("ready", as: "state")
             }
         }
         let provisioner = try JavaScriptRuntimeProvisioner(
@@ -40,7 +40,7 @@ struct RuntimeProvisionerExamplesTests {
 
     @Test("provisioner capacity and creation concurrency must be positive")
     func provisionerValidatesCapacity() throws {
-        let template = try JavaScriptRuntimeTemplate { _ in }
+        let template = try JavaScriptRuntimeTemplate {}
 
         #expect(throws: JavaScriptError.self) {
             _ = try JavaScriptRuntimeProvisioner(

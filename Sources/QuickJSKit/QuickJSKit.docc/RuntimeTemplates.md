@@ -9,23 +9,27 @@ modules, loaders, documentation, schemas, and optional per-runtime Swift
 factories. It never stores a QuickJS heap or live JavaScript value.
 
 ```swift
-let template = try JavaScriptRuntimeTemplate { template in
-    template.globals { globals in
-        globals.function("sum") { (left: Int, right: Int) in
+let template = try JavaScriptRuntimeTemplate {
+    Globals {
+        Function("sum") { (left: Int, right: Int) in
             left + right
         }
     }
 
-    template.registerModule(
+    SourceModule(
         "export const answer = 42;",
         as: "app:answer",
-        typeScriptDeclarations: .init("export const answer: number;")
+        declarations: .init("export const answer: number;")
     )
 }
 
 let runtime = try await template.makeRuntime()
 let answer: Int = try await runtime.evaluate("sum(20, 22)")
 ```
+
+The template uses concrete Result Builder components. Standard Swift `if`,
+`switch`, `for`, optional, and availability branches are flattened in lexical
+order into the canonical detached provisioning definitions.
 
 Every created ``JavaScriptRuntime`` has a separate QuickJS runtime, context,
 module graph, Promise queue, globals, and resource limits. Create several in
@@ -42,19 +46,21 @@ let bootstrap = JavaScriptProgram(
     sourceURL: "Scripts/bootstrap.js"
 )
 
-let template = try JavaScriptRuntimeTemplate { template in
-    template.globals { globals in
-        globals.function("loadConfiguration") { () async -> Bool in true }
+let template = try JavaScriptRuntimeTemplate {
+    Globals {
+        Function("loadConfiguration") { () async -> Bool in true }
     }
-    template.registerModule("export const shared = true", as: "app:shared")
-    template.registerModule(
+    SourceModule("export const shared = true", as: "app:shared")
+    SourceModule(
         "import { shared } from 'app:shared'; export { shared }",
         as: "app:main"
     )
-    template.prepare(bootstrap)
-    template.runAtStartup(bootstrap)
-    template.preloadModule("app:shared")
-    template.importModuleAtStartup("app:main")
+    Prepare(bootstrap)
+    Startup {
+        Run(bootstrap)
+        PreloadModule("app:shared")
+        ImportModule("app:main")
+    }
 }
 ```
 
@@ -92,10 +98,10 @@ actor Storage {
     func read(_ key: String) -> String { key }
 }
 
-let template = try JavaScriptRuntimeTemplate { template in
-    template.instance(factory: { Storage() }) { instance in
-        instance.export(as: "storage") { export in
-            export.function("read") { storage, key in
+let template = try JavaScriptRuntimeTemplate {
+    RuntimeInstance(factory: { Storage() }) {
+        RuntimeObject(as: "storage") {
+            InstanceFunction("read") { storage, key in
                 try await storage.read(key)
             }
         }
@@ -118,6 +124,18 @@ let workspace = try environment.typeScriptWorkspace()
 ```
 
 Calling this method does not create QuickJS or invoke a Swift factory.
+
+## Migrating from mutable template builders
+
+Template construction now uses nominal declarations rather than an `inout`
+builder. Replace `template.globals` with ``Globals``, `globals.function` with
+``Function``, `globals.value` with ``Value``, and `template.defineModule` with
+``SwiftModule``. Replace `template.registerModule` with ``SourceModule``.
+
+Per-runtime factory groups use ``RuntimeInstance``, ``RuntimeGlobals``,
+``RuntimeObject``, and ``RuntimeModule``. Their members use
+``InstanceFunction`` and ``InstanceValue``. Prepared and startup work uses
+``Prepare`` and ``Startup``. No deprecated mutable-template aliases remain.
 
 ## Compilation and ownership
 

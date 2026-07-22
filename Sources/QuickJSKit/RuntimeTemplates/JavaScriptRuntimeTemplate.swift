@@ -39,22 +39,19 @@ public struct JavaScriptRuntimeTemplate: Sendable {
     ///
     /// - Parameters:
     ///   - configuration: Configuration copied to every created runtime.
-    ///   - configure: A closure declaring the reusable environment.
+    ///   - content: Declarative components describing the reusable environment.
     /// - Throws: ``JavaScriptError`` when definitions conflict, metadata is
     ///   invalid, a live JavaScript value is present, or registered module
     ///   source contains a syntax error.
     public init(
         configuration: JavaScriptRuntime.Configuration = .init(),
-        _ configure: @Sendable (
-            inout JavaScriptRuntimeTemplateBuilder
-        ) -> Void
+        @ContentBuilder _ content: @Sendable () -> Component
     ) throws {
-        var builder = JavaScriptRuntimeTemplateBuilder()
-        configure(&builder)
+        let component = content()
         self.configuration = configuration
         self.plan = try RuntimeTemplateProvisioningPlan(
             configuration: configuration,
-            builder: builder
+            component: component
         ).compilingArtifacts()
     }
 

@@ -65,55 +65,55 @@ internal struct RuntimeTemplateProvisioningPlan: Sendable {
 
     internal init(
         configuration: JavaScriptRuntime.Configuration,
-        builder: JavaScriptRuntimeTemplateBuilder
+        component: JavaScriptRuntimeTemplate.Component
     ) throws {
-        guard builder.moduleLoaders.count <= 1 else {
+        guard component.moduleLoaders.count <= 1 else {
             throw JavaScriptError(
                 kind: .conversion,
                 message: "A runtime template can define only one module loader."
             )
         }
 
-        try Self.validateDefinitions(builder.definitions)
-        try Self.validateModuleSources(builder.moduleSources)
-        if let message = builder.instances.lazy
+        try Self.validateDefinitions(component.definitions)
+        try Self.validateModuleSources(component.moduleSources)
+        if let message = component.instances.lazy
             .flatMap(\.validationMessages)
             .first {
             throw JavaScriptError(kind: .conversion, message: message)
         }
 
-        let definitionGlobals = builder.definitions.flatMap(\.environmentGlobals)
-        let instanceGlobals = builder.instances.flatMap(\.globals)
+        let definitionGlobals = component.definitions.flatMap(\.environmentGlobals)
+        let instanceGlobals = component.instances.flatMap(\.globals)
         try Self.validateUniqueNames(
             (definitionGlobals + instanceGlobals).map(\.name),
             message: "A runtime template cannot contain duplicate global names."
         )
 
-        let definitionModules = builder.definitions.compactMap(\.environmentModule)
-        let instanceModules = builder.instances.flatMap(\.modules)
-        let sourceModules = builder.moduleSources.map(\.environmentDescription)
+        let definitionModules = component.definitions.compactMap(\.environmentModule)
+        let instanceModules = component.instances.flatMap(\.modules)
+        let sourceModules = component.moduleSources.map(\.environmentDescription)
         let modules = definitionModules + instanceModules + sourceModules
         try Self.validateUniqueNames(
             modules.map(\.specifier),
             message: "A runtime template cannot contain duplicate module specifiers."
         )
 
-        let programs = try Self.normalizedPrograms(builder.programs)
+        let programs = try Self.normalizedPrograms(component.programs)
         try Self.validateStartupActions(
-            builder.startupActions,
+            component.startupActions,
             knownModuleSpecifiers: Set(modules.map(\.specifier)),
-            hasModuleLoader: builder.moduleLoaders.first != nil
+            hasModuleLoader: component.moduleLoaders.first != nil
         )
 
         self.configuration = configuration
-        self.definitions = builder.definitions
-        self.moduleSources = builder.moduleSources
-        self.moduleLoader = builder.moduleLoaders.first
-        self.instances = builder.instances
+        self.definitions = component.definitions
+        self.moduleSources = component.moduleSources
+        self.moduleLoader = component.moduleLoaders.first
+        self.instances = component.instances
         self.programs = programs.map {
             RuntimeTemplateProgram(program: $0, compiledArtifact: nil)
         }
-        self.startupActions = builder.startupActions
+        self.startupActions = component.startupActions
         self.environment = JavaScriptEnvironmentDescription(
             globals: definitionGlobals + instanceGlobals,
             modules: modules,

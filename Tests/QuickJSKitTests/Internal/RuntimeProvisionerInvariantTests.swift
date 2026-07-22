@@ -6,8 +6,8 @@ struct RuntimeProvisionerInvariantTests {
     @Test("runtime creation never exceeds configured concurrency")
     func creationIsBounded() async throws {
         let gate = ProvisioningGate()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { try await gate.makeRoot() }) { _ in }
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { try await gate.makeRoot() }) {}
         }
         let provisioner = try JavaScriptRuntimeProvisioner(
             template: template,
@@ -33,8 +33,8 @@ struct RuntimeProvisionerInvariantTests {
     @Test("cancelling one FIFO waiter preserves shared provisioning")
     func waiterCancellationIsLocal() async throws {
         let gate = ProvisioningGate()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { try await gate.makeRoot() }) { _ in }
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { try await gate.makeRoot() }) {}
         }
         let provisioner = try JavaScriptRuntimeProvisioner(
             template: template,
@@ -63,8 +63,8 @@ struct RuntimeProvisionerInvariantTests {
     @Test("the first failed warm-up releases its partial ready capacity")
     func initialWarmUpIsTransactional() async throws {
         let factory = FailingWarmUpFactory()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { try await factory.makeRoot() }) { _ in }
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { try await factory.makeRoot() }) {}
         }
         let provisioner = try JavaScriptRuntimeProvisioner(
             template: template,
@@ -85,8 +85,8 @@ struct RuntimeProvisionerInvariantTests {
     @Test("shutdown cancels waiting consumers and in-progress creation")
     func shutdownCancelsPendingWork() async throws {
         let gate = ProvisioningGate()
-        let template = try JavaScriptRuntimeTemplate { template in
-            template.instance(factory: { try await gate.makeRoot() }) { _ in }
+        let template = try JavaScriptRuntimeTemplate {
+            RuntimeInstance(factory: { try await gate.makeRoot() }) {}
         }
         let provisioner = try JavaScriptRuntimeProvisioner(
             template: template,

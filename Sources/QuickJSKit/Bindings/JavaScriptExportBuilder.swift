@@ -9,6 +9,40 @@ public struct JavaScriptExportBuilder {
 
     internal init() {}
 
+    /// Publishes a macro-generated Swift value type from a Swift module.
+    public mutating func type<Value>(_ type: Value.Type)
+    where Value: JavaScriptValueTypeProviding {
+        let definition = Value.javaScriptValueTypeDefinition
+        members.append(
+            JavaScriptExportMemberDefinition(
+                name: definition.name,
+                documentation: definition.documentation,
+                sourceLocation: definition.sourceLocation,
+                validationMessage: nil,
+                storage: .type(
+                    definition.erase(
+                        schema: collectedTypeScriptSchema(from: Value.self)
+                    )
+                )
+            )
+        )
+    }
+
+    /// Publishes a macro-generated live Swift host type from a Swift module.
+    public mutating func type<Root>(_ type: Root.Type)
+    where Root: JavaScriptHostTypeProviding {
+        let definition = Root.javaScriptHostTypeDefinition
+        members.append(
+            JavaScriptExportMemberDefinition(
+                name: definition.name,
+                documentation: definition.documentation,
+                sourceLocation: definition.sourceLocation,
+                validationMessage: nil,
+                storage: .type(.host(definition.erase()))
+            )
+        )
+    }
+
     /// Adds a synchronous typed method.
     public mutating func function<each Argument, Result>(
         _ name: String,
@@ -407,6 +441,12 @@ internal struct JavaScriptExportMemberDefinition: Sendable {
             encode: @Sendable (QuickJSEngine) throws -> ManagedQuickJSValue
         )
         case liveValue(type: BindingTypeShape, value: JavaScriptValue)
+        case type(AnyJavaScriptTypeDefinition)
+        case materializedHostType(
+            AnyJavaScriptHostTypeDefinition,
+            identifier: Int32,
+            instanceMembers: [JavaScriptExportMemberDefinition]
+        )
     }
 
     internal let name: String

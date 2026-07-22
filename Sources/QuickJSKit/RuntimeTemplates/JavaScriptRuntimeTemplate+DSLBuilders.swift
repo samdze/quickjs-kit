@@ -59,7 +59,10 @@ extension JavaScriptRuntimeTemplate {
             @ExportBuilder _ content: @Sendable () -> Export
         ) -> Self {
             var component = Self()
-            component.definitions.append(.globals(content().members))
+            let export = content()
+            component.definitions.append(
+                .globals(members: export.members, types: export.types)
+            )
             return component
         }
 
@@ -74,12 +77,14 @@ extension JavaScriptRuntimeTemplate {
             @ExportBuilder _ content: @Sendable (Root) -> Export
         ) -> Self {
             var component = Self()
+            let export = content(root)
             component.definitions.append(
                 .object(
                     name: name,
                     documentation: documentation,
                     root: root,
-                    members: content(root).members
+                    members: export.members,
+                    types: export.types
                 )
             )
             return component
@@ -92,11 +97,13 @@ extension JavaScriptRuntimeTemplate {
             @ExportBuilder _ content: @Sendable () -> Export
         ) -> Self {
             var component = Self()
+            let export = content()
             component.definitions.append(
                 .module(
                     specifier: specifier,
                     documentation: documentation,
-                    members: content().members
+                    members: export.members,
+                    types: export.types
                 )
             )
             return component
@@ -158,7 +165,7 @@ extension JavaScriptRuntimeTemplate {
                                     )
                                 )
                             }
-                            try runtime.installTemplateInstance(
+                            try await runtime.installTemplateInstance(
                                 definitions,
                                 rootIdentifier: rootIdentifier
                             )
@@ -215,6 +222,11 @@ extension JavaScriptRuntimeTemplate {
             expression
         }
 
+        /// Accepts a published Swift type declaration.
+        public static func buildExpression(_ expression: JavaScriptType) -> Export {
+            expression.export
+        }
+
         /// Combines members in lexical order.
         public static func buildBlock(_ components: Export...) -> Export {
             Export.merging(components)
@@ -249,11 +261,16 @@ extension JavaScriptRuntimeTemplate {
     /// One or more ordinary members declared by the template DSL.
     public struct Export: Sendable {
         internal var members: [JavaScriptExportMemberDefinition] = []
+        internal var types: [AnyJavaScriptTypeDefinition] = []
 
         internal init() {}
 
         internal init(members: [JavaScriptExportMemberDefinition]) {
             self.members = members
+        }
+
+        internal init(types: [AnyJavaScriptTypeDefinition]) {
+            self.types = types
         }
 
         /// Declares a synchronous typed function.
@@ -360,6 +377,7 @@ extension JavaScriptRuntimeTemplate {
             )
             for component in components {
                 result.members.append(contentsOf: component.members)
+                result.types.append(contentsOf: component.types)
             }
             return result
         }

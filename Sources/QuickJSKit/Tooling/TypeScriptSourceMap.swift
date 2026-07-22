@@ -284,6 +284,8 @@ private struct TypeScriptSourceMapRenderer {
                     switch member {
                     case let .function(function):
                         append(function, patterns: ["\(function.name)("], to: &result)
+                    case .type:
+                        break
                     case let .value(value):
                         append(
                             value,
@@ -300,6 +302,21 @@ private struct TypeScriptSourceMapRenderer {
                     patterns: ["declare let \(value.name): "],
                     to: &result
                 )
+            case let .type(type):
+                if let location = type.sourceLocation {
+                    result.append(
+                        Origin(
+                            name: type.name,
+                            patterns: [
+                                "const \(type.name): ",
+                                "interface \(type.name)",
+                                "class \(type.name)",
+                            ],
+                            location: location
+                        )
+                    )
+                }
+                appendHostTypeMembers(type, to: &result)
             }
         }
         for module in environment.modules {
@@ -312,6 +329,21 @@ private struct TypeScriptSourceMapRenderer {
                         patterns: ["function \(function.name)("],
                         to: &result
                     )
+                case let .type(type):
+                    if let location = type.sourceLocation {
+                        result.append(
+                            Origin(
+                                name: type.name,
+                                patterns: [
+                                    "const \(type.name): ",
+                                    "interface \(type.name)",
+                                    "class \(type.name)",
+                                ],
+                                location: location
+                            )
+                        )
+                    }
+                    appendHostTypeMembers(type, to: &result)
                 case let .value(value):
                     append(
                         value,
@@ -323,6 +355,46 @@ private struct TypeScriptSourceMapRenderer {
             }
         }
         return result
+    }
+
+    private func appendHostTypeMembers(
+        _ type: EnvironmentTypeDescription,
+        to result: inout [Origin]
+    ) {
+        guard case let .host(constructors, staticMembers, instanceMembers) = type.kind else {
+            return
+        }
+        for constructor in constructors {
+            append(
+                constructor,
+                patterns: constructor.effects.isAsync
+                    ? ["static create("]
+                    : ["constructor("],
+                to: &result
+            )
+        }
+        for member in staticMembers + instanceMembers {
+            switch member {
+            case let .function(function):
+                append(
+                    function,
+                    patterns: [
+                        "\(sourceMapPropertyKey(function.name))(",
+                        "\(sourceMapPropertyKey(function.name)): (",
+                    ],
+                    to: &result
+                )
+            case let .value(value):
+                append(
+                    value,
+                    name: "\(type.name).\(value.name)",
+                    patterns: ["\(sourceMapPropertyKey(value.name)): "],
+                    to: &result
+                )
+            case .type:
+                break
+            }
+        }
     }
 
     private func append(
@@ -364,6 +436,8 @@ private struct TypeScriptSourceMapRenderer {
         case let .function(function): collectSchemas(from: function, into: &schemas)
         case let .object(_, _, members):
             for member in members { collectSchemas(from: member, into: &schemas) }
+        case let .type(type):
+            if let schema = type.schema { schemas.append(schema) }
         case let .value(value): collectSchemas(from: value.type, into: &schemas)
         }
     }
@@ -374,6 +448,8 @@ private struct TypeScriptSourceMapRenderer {
     ) {
         switch member {
         case let .function(function): collectSchemas(from: function, into: &schemas)
+        case let .type(type):
+            if let schema = type.schema { schemas.append(schema) }
         case let .value(value): collectSchemas(from: value.type, into: &schemas)
         }
     }

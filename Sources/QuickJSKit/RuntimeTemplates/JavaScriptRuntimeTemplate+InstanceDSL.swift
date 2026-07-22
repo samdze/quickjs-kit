@@ -195,10 +195,11 @@ internal enum RuntimeInstanceDestination<Root: AnyObject>: Sendable {
         switch self {
         case let .globals(members):
             definition = .globals(
-                try await members.materialize(
+                members: try await members.materialize(
                     on: runtime,
                     rootIdentifier: rootIdentifier
-                )
+                ),
+                types: []
             )
         case let .object(name, documentation, members):
             definition = .object(
@@ -208,7 +209,8 @@ internal enum RuntimeInstanceDestination<Root: AnyObject>: Sendable {
                 members: try await members.materialize(
                     on: runtime,
                     rootIdentifier: rootIdentifier
-                )
+                ),
+                types: []
             )
         case let .module(specifier, documentation, members):
             definition = .module(
@@ -217,7 +219,8 @@ internal enum RuntimeInstanceDestination<Root: AnyObject>: Sendable {
                 members: try await members.materialize(
                     on: runtime,
                     rootIdentifier: rootIdentifier
-                )
+                ),
+                types: []
             )
         }
         return definition
@@ -234,7 +237,7 @@ private extension Array {
         result.reserveCapacity(count)
         for member in self {
             result.append(
-                try await member.materialize(runtime, rootIdentifier)
+                try await member.materialize(runtime, .fixed(rootIdentifier))
             )
         }
         return result

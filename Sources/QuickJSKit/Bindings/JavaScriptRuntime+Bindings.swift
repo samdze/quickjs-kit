@@ -198,4 +198,68 @@ internal final class BindingArgumentDecoder {
             maximumNestingDepth: JavaScriptDecoder.defaultMaximumNestingDepth
         )
     }
+
+    internal func nextHost<T: JavaScriptHostTypeProviding>(
+        _ type: T.Type,
+        runtime: isolated JavaScriptRuntime
+    ) throws -> T {
+        defer { index += 1 }
+        let value = index < arguments.count
+            ? arguments[index]
+            : ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
+        let rootIdentifier = try hostIdentifier(type, from: value)
+        return try runtime.runtimeRoot(rootIdentifier, as: type)
+    }
+
+    internal func nextHostIdentifier<T: JavaScriptHostTypeProviding>(
+        _ type: T.Type
+    ) throws -> UInt64 {
+        defer { index += 1 }
+        let value = index < arguments.count
+            ? arguments[index]
+            : ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
+        return try hostIdentifier(type, from: value)
+    }
+
+    internal func nextOptionalHostIdentifier<T: JavaScriptHostTypeProviding>(
+        _ type: T.Type
+    ) throws -> UInt64? {
+        guard index < arguments.count else {
+            index += 1
+            return nil
+        }
+        let value = arguments[index]
+        if engine.isNullish(value) {
+            index += 1
+            return nil
+        }
+        return try nextHostIdentifier(type)
+    }
+
+    internal func nextOptionalHost<T: JavaScriptHostTypeProviding>(
+        _ type: T.Type,
+        runtime: isolated JavaScriptRuntime
+    ) throws -> T? {
+        guard index < arguments.count else {
+            index += 1
+            return nil
+        }
+        let value = arguments[index]
+        if engine.isNullish(value) {
+            index += 1
+            return nil
+        }
+        return try nextHost(type, runtime: runtime)
+    }
+
+    private func hostIdentifier<T: JavaScriptHostTypeProviding>(
+        _ type: T.Type,
+        from value: ManagedQuickJSValue
+    ) throws -> UInt64 {
+        let typeIdentifier = try engine.hostTypeIdentifier(for: type)
+        return try engine.hostRootIdentifier(
+            from: value.raw,
+            expectedTypeIdentifier: typeIdentifier
+        )
+    }
 }

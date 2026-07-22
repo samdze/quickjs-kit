@@ -38,7 +38,7 @@ internal final class QuickJSEngine {
     internal let context: OpaquePointer
     internal let maximumJavaScriptStackSize: Int
 
-    private let callbackBridge: QuickJSRuntimeBridge
+    internal let callbackBridge: QuickJSRuntimeBridge
 
     // Live values
     private var nextReferenceIdentifier: UInt64 = 1
@@ -87,6 +87,16 @@ internal final class QuickJSEngine {
     internal var preparedProgramCompilationCountForTesting = 0
     internal var cachedProgramReadCountForTesting = 0
     internal var templateCacheFallbackCountForTesting = 0
+
+    // JavaScript-visible Swift types
+    internal var nextTypeIdentifier: Int32 = 1
+    internal var typeFunctions: [Int32: RegisteredTypeFunction] = [:]
+    internal var typeLocationsBySwiftIdentity: [ObjectIdentifier: JavaScriptTypeLocation] = [:]
+    internal var typeIdentifiersBySwiftIdentity: [ObjectIdentifier: Int32] = [:]
+    internal var hostObjectsBySwiftIdentity: [
+        ObjectIdentifier: HostObjectIdentityEntry
+    ] = [:]
+    internal var hostObjectIdentitiesByRootIdentifier: [UInt64: ObjectIdentifier] = [:]
 
     internal init(configuration: JavaScriptRuntime.Configuration) throws {
         let memoryLimit = try Self.platformSize(
@@ -165,6 +175,9 @@ internal final class QuickJSEngine {
         swiftModules.removeAll()
         compiledProgramValues.removeAll()
         compiledModuleValues.removeAll()
+        typeFunctions.removeAll()
+        hostObjectsBySwiftIdentity.removeAll()
+        hostObjectIdentitiesByRootIdentifier.removeAll()
         removeAllBindingsForTeardown()
         references.removeAll()
         identifiersByObjectAddress.removeAll()
@@ -201,6 +214,10 @@ internal final class QuickJSEngine {
 
     internal func collectGarbage() {
         JS_RunGC(runtime)
+    }
+
+    internal func isNullish(_ value: ManagedQuickJSValue) -> Bool {
+        JS_IsNull(value.raw) != 0 || JS_IsUndefined(value.raw) != 0
     }
 
     internal func withEngineEntry<Result>(

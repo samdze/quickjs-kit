@@ -125,14 +125,22 @@ extension JavaScriptRuntime {
     public func memoryUsage() -> JavaScriptMemoryUsage {
         do {
             return try engine.withEngineEntry(drainJobs: false) {
-                engine.memoryUsage(allocationLimit: configuration.memoryLimit)
+                let usage = engine.memoryUsage(allocationLimit: configuration.memoryLimit)
+                return JavaScriptMemoryUsage(
+                    allocatedBytes: usage.allocatedBytes,
+                    allocationLimit: usage.allocationLimit,
+                    usedBytes: usage.usedBytes,
+                    hostObjectCount: UInt64(runtimeState.hostRootIdentifiers.count),
+                    hostObjectLimit: configuration.maximumHostObjectCount
+                )
             }
         } catch {
             assertionFailure("Memory reporting unexpectedly failed: \(error)")
             return JavaScriptMemoryUsage(
                 allocatedBytes: 0,
                 allocationLimit: configuration.memoryLimit,
-                usedBytes: 0
+                usedBytes: 0,
+                hostObjectLimit: configuration.maximumHostObjectCount
             )
         }
     }

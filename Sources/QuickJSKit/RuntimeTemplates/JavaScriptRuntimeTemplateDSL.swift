@@ -226,6 +226,32 @@ public struct Value: Sendable {
     }
 }
 
+/// Publishes a Swift type as a JavaScript constructor, enum validator, or live
+/// host type.
+public struct JavaScriptType: Sendable {
+    internal let export: JavaScriptRuntimeTemplate.Export
+
+    /// Creates a JavaScript value type from a macro-generated struct or enum
+    /// definition.
+    public init<Value>(_ type: Value.Type)
+    where Value: JavaScriptValueTypeProviding {
+        let definition = Value.javaScriptValueTypeDefinition.erase(
+            schema: collectedTypeScriptSchema(from: Value.self)
+        )
+        export = JavaScriptRuntimeTemplate.Export(types: [definition])
+    }
+
+    /// Creates a live JavaScript host type from a macro-generated final class
+    /// or actor definition.
+    public init<Root>(_ type: Root.Type)
+    where Root: JavaScriptHostTypeProviding {
+        let definition = Root.javaScriptHostTypeDefinition
+        export = JavaScriptRuntimeTemplate.Export(
+            types: [.host(definition.erase())]
+        )
+    }
+}
+
 /// Declares a live property in a shared object or global export.
 public struct Property: Sendable {
     internal let export: JavaScriptRuntimeTemplate.Export
@@ -344,6 +370,397 @@ public struct RuntimeModule<Root: AnyObject>: Sendable {
 /// Declares a function receiving a per-runtime Swift root as its first argument.
 public struct InstanceFunction<Root: AnyObject>: Sendable {
     internal let export: JavaScriptRuntimeTemplate.InstanceExport<Root>
+
+    /// Creates a synchronous function returning a live Swift host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        _ body: @escaping @Sendable (Root, repeat each Argument) -> Result
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding & Sendable {
+        export = .hostFunction(name, options: options, body)
+    }
+
+    /// Creates a synchronous function returning an optional host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        _ body: @escaping @Sendable (Root, repeat each Argument) -> Result?
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding & Sendable {
+        export = .optionalHostFunction(
+            name,
+            options: options,
+            isThrowing: false,
+            body
+        )
+    }
+
+    /// Creates a throwing synchronous function returning an optional host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        _ body: @escaping @Sendable (Root, repeat each Argument) throws -> Result?
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding & Sendable {
+        export = .optionalHostFunction(
+            name,
+            options: options,
+            isThrowing: true,
+            body
+        )
+    }
+
+    /// Creates an actor-confined async function returning a host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async -> Result
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding {
+        export = .runtimeIsolatedHostResultFunction(
+            name,
+            options: options,
+            isThrowing: false,
+            body
+        )
+    }
+
+    /// Creates an actor-confined throwing async function returning a host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async throws -> Result
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding {
+        export = .runtimeIsolatedHostResultFunction(
+            name,
+            options: options,
+            isThrowing: true,
+            body
+        )
+    }
+
+    /// Creates an actor-confined async function returning an optional host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async -> Result?
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding {
+        export = .runtimeIsolatedHostResultFunction(
+            name,
+            options: options,
+            optional: true,
+            isThrowing: false,
+            body
+        )
+    }
+
+    /// Creates an actor-confined throwing async function returning an optional host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            repeat each Argument
+        ) async throws -> Result?
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding {
+        export = .runtimeIsolatedHostResultFunction(
+            name,
+            options: options,
+            optional: true,
+            isThrowing: true,
+            body
+        )
+    }
+
+    /// Creates a synchronous function accepting one exact host reference.
+    public init<Argument: JavaScriptHostTypeProviding, Result: Encodable & Sendable>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        _ body: @escaping @Sendable (Root, Argument) -> Result
+    ) {
+        export = .hostArgumentFunction(
+            name,
+            options: options,
+            isThrowing: false,
+            { root, argument in body(root, argument!) }
+        )
+    }
+
+    /// Creates an actor-confined async Void function accepting one host reference.
+    public init<Argument: JavaScriptHostTypeProviding>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument
+        ) async -> Void
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            isThrowing: false,
+            resultShape: .void,
+            { runtime, root, argument in
+                await body(runtime, root, argument!)
+            },
+            encode: { _ in
+                BindingResult { engine in
+                    ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
+                }
+            }
+        )
+    }
+
+    /// Creates an actor-confined throwing async Void function accepting one host reference.
+    public init<Argument: JavaScriptHostTypeProviding>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument
+        ) async throws -> Void
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            isThrowing: true,
+            resultShape: .void,
+            { runtime, root, argument in
+                try await body(runtime, root, argument!)
+            },
+            encode: { _ in
+                BindingResult { engine in
+                    ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
+                }
+            }
+        )
+    }
+
+    /// Creates an actor-confined async Void function accepting an optional host reference.
+    public init<Argument: JavaScriptHostTypeProviding>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument?
+        ) async -> Void
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            optional: true,
+            isThrowing: false,
+            resultShape: .void,
+            body,
+            encode: { _ in
+                BindingResult { engine in
+                    ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
+                }
+            }
+        )
+    }
+
+    /// Creates an actor-confined throwing async Void function accepting an optional host reference.
+    public init<Argument: JavaScriptHostTypeProviding>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument?
+        ) async throws -> Void
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            optional: true,
+            isThrowing: true,
+            resultShape: .void,
+            body,
+            encode: { _ in
+                BindingResult { engine in
+                    ManagedQuickJSValue(quickJSUndefined(), in: engine.context)
+                }
+            }
+        )
+    }
+
+    /// Creates an actor-confined async function accepting one host reference.
+    public init<Argument: JavaScriptHostTypeProviding, Result: Encodable & Sendable>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument
+        ) async -> Result
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            isThrowing: false,
+            resultShape: bindingTypeShape(for: Result.self),
+            { runtime, root, argument in
+                await body(runtime, root, argument!)
+            },
+            encode: { result in
+                BindingResult { engine in
+                    try engine.encode(
+                        result,
+                        maximumNestingDepth:
+                            JavaScriptEncoder.defaultMaximumNestingDepth
+                    )
+                }
+            }
+        )
+    }
+
+    /// Creates an actor-confined throwing async function accepting one host reference.
+    public init<Argument: JavaScriptHostTypeProviding, Result: Encodable & Sendable>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument
+        ) async throws -> Result
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            isThrowing: true,
+            resultShape: bindingTypeShape(for: Result.self),
+            { runtime, root, argument in
+                try await body(runtime, root, argument!)
+            },
+            encode: { result in
+                BindingResult { engine in
+                    try engine.encode(
+                        result,
+                        maximumNestingDepth:
+                            JavaScriptEncoder.defaultMaximumNestingDepth
+                    )
+                }
+            }
+        )
+    }
+
+    /// Creates an actor-confined async function accepting an optional host reference.
+    public init<Argument: JavaScriptHostTypeProviding, Result: Encodable & Sendable>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument?
+        ) async -> Result
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            optional: true,
+            isThrowing: false,
+            resultShape: bindingTypeShape(for: Result.self),
+            body,
+            encode: { result in
+                BindingResult { engine in
+                    try engine.encode(
+                        result,
+                        maximumNestingDepth:
+                            JavaScriptEncoder.defaultMaximumNestingDepth
+                    )
+                }
+            }
+        )
+    }
+
+    /// Creates an actor-confined throwing async function accepting an optional host reference.
+    public init<Argument: JavaScriptHostTypeProviding, Result: Encodable & Sendable>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        runtimeIsolated body: @escaping @Sendable (
+            isolated JavaScriptRuntime,
+            Root,
+            Argument?
+        ) async throws -> Result
+    ) {
+        export = .runtimeIsolatedHostArgumentFunction(
+            name,
+            options: options,
+            optional: true,
+            isThrowing: true,
+            resultShape: bindingTypeShape(for: Result.self),
+            body,
+            encode: { result in
+                BindingResult { engine in
+                    try engine.encode(
+                        result,
+                        maximumNestingDepth:
+                            JavaScriptEncoder.defaultMaximumNestingDepth
+                    )
+                }
+            }
+        )
+    }
+
+    /// Creates a throwing function accepting one exact host reference.
+    public init<Argument: JavaScriptHostTypeProviding, Result: Encodable & Sendable>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        _ body: @escaping @Sendable (Root, Argument) throws -> Result
+    ) {
+        export = .hostArgumentFunction(
+            name,
+            options: options,
+            isThrowing: true,
+            { root, argument in try body(root, argument!) }
+        )
+    }
+
+    /// Creates a synchronous function accepting an optional host reference.
+    public init<Argument: JavaScriptHostTypeProviding, Result: Encodable & Sendable>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        _ body: @escaping @Sendable (Root, Argument?) -> Result
+    ) {
+        export = .hostArgumentFunction(
+            name,
+            options: options,
+            optional: true,
+            isThrowing: false,
+            body
+        )
+    }
+
+    /// Creates a throwing synchronous function returning a live Swift host object.
+    public init<each Argument, Result>(
+        _ name: String,
+        options: JavaScriptFunctionOptions = .init(),
+        _ body: @escaping @Sendable (Root, repeat each Argument) throws -> Result
+    ) where repeat each Argument: Decodable & Sendable,
+            Result: JavaScriptHostTypeProviding & Sendable {
+        export = .hostFunction(name, options: options, body)
+    }
 
     /// Creates a synchronous root-backed function declaration.
     public init<each Argument, Result>(

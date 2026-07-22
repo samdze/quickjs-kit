@@ -1,9 +1,29 @@
 @_exported import QuickJSKit
 
-/// Generates a reusable JavaScript export definition for an actor or final class.
-@attached(member, names: named(javaScriptExportDocumentation), named(javaScriptExportSourceLocation), named(javaScriptExportDefinition))
-@attached(extension, conformances: JavaScriptExportProviding)
-public macro JavaScriptExport() =
+/// Generates the canonical JavaScript representation of a Swift declaration.
+///
+/// Structs and raw enums become Codable value types. Final classes and actors
+/// become live Swift host types. Runtime publication remains explicit through
+/// `JavaScriptType`.
+@attached(
+    member,
+    names: named(javaScriptExportDocumentation),
+    named(javaScriptExportSourceLocation),
+    named(javaScriptHostTypeName),
+    named(javaScriptHostTypeScope),
+    named(javaScriptExportDefinition),
+    named(javaScriptValueTypeDefinition),
+    named(javaScriptHostTypeDefinition)
+)
+@attached(
+    extension,
+    conformances: TypeScriptSchemaProviding,
+    JavaScriptValueTypeProviding,
+    JavaScriptExportProviding,
+    JavaScriptHostTypeProviding,
+    names: named(typeScriptSchema), named(typeScriptSchemaDependencies)
+)
+public macro JavaScriptExport(scope: TypeScriptDeclarationScope? = nil) =
     #externalMacro(module: "_QuickJSKitMacroPlugin", type: "JavaScriptExportMacro")
 
 /// Excludes one otherwise eligible member from `@JavaScriptExport`.
@@ -20,8 +40,3 @@ public macro JavaScriptName(_ name: String) =
 @attached(peer)
 public macro JavaScriptReadOnly() =
     #externalMacro(module: "_QuickJSKitMacroPlugin", type: "MarkerMacro")
-
-/// Synthesizes an explicit TypeScript schema for a Codable model.
-@attached(extension, conformances: TypeScriptSchemaProviding, names: named(typeScriptSchema), named(typeScriptSchemaDependencies))
-public macro TypeScriptModel(scope: TypeScriptDeclarationScope? = nil) =
-    #externalMacro(module: "_QuickJSKitMacroPlugin", type: "TypeScriptModelMacro")

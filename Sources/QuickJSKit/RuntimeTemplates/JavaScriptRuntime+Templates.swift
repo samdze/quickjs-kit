@@ -9,7 +9,7 @@ extension JavaScriptRuntime {
         _ plan: RuntimeTemplateProvisioningPlan,
         usingCompiledArtifacts: Bool,
         usedSourceFallback: Bool
-    ) throws {
+    ) async throws {
         if let loader = plan.moduleLoader {
             try setModuleLoader(loader)
         }
@@ -51,23 +51,23 @@ extension JavaScriptRuntime {
             if usedSourceFallback {
                 engine.templateCacheFallbackCountForTesting += 1
             }
-
-            for definition in plan.definitions {
-                try installTemplateDefinition(definition)
+            for definition in plan.definitions where !definition.containsHostTypes {
+                try installTemplateDefinitionWithoutHostTypes(definition)
             }
+        }
+        for definition in plan.definitions where definition.containsHostTypes {
+            try await installTemplateDefinition(definition)
         }
     }
 
     internal func installTemplateInstance(
         _ definitions: [RuntimeTemplateDefinition],
         rootIdentifier: UInt64
-    ) throws {
+    ) async throws {
         do {
-            try engine.withEngineEntry(drainJobs: false) {
-                reserveCapacity(for: definitions)
-                for definition in definitions {
-                    try installTemplateDefinition(definition)
-                }
+            reserveCapacity(for: definitions)
+            for definition in definitions {
+                try await installTemplateDefinition(definition)
             }
         } catch {
             releaseRuntimeRoot(rootIdentifier)
@@ -95,13 +95,16 @@ extension JavaScriptRuntime {
 
     private func installTemplateDefinition(
         _ definition: RuntimeTemplateDefinition
-    ) throws {
+    ) async throws {
         switch definition {
-        case let .globals(members):
+        case let .globals(members, types):
             for member in members {
                 try installTemplateGlobal(member)
             }
-        case let .object(name, documentation, root, members):
+            for type in types {
+                try await installType(type, at: .global)
+            }
+        case let .object(name, documentation, root, members, _):
             try engine.withEngineEntry {
                 _ = try engine.registerExport(
                     named: name,
@@ -111,12 +114,16 @@ extension JavaScriptRuntime {
                     settle: bindingSettlement
                 )
             }
-        case let .module(specifier, documentation, members):
+        case let .module(specifier, documentation, members, types):
+            let typeMembers = try await materializeTypes(
+                types,
+                at: .module(specifier)
+            )
             try engine.withEngineEntry {
                 try engine.registerSwiftModule(
                     specifier: specifier,
                     documentation: documentation,
-                    members: members,
+                    members: members + typeMembers,
                     settle: bindingSettlement
                 )
             }
@@ -222,7 +229,156 @@ extension JavaScriptRuntime {
                 kind: .internalFailure,
                 message: "A validated runtime template contained a live JavaScript value."
             )
+        case let .type(definition):
+            guard case let .value(value) = definition else {
+                throw JavaScriptError(
+                    kind: .internalFailure,
+                    message: "A host type requires actor-isolated materialization."
+                )
+            }
+            try engine.publishGlobalValueType(value)
+        case .materializedHostType:
+            throw JavaScriptError(
+                kind: .internalFailure,
+                message: "A materialized host type cannot be installed as a value member."
+            )
         }
+    }
+
+    private func installTemplateDefinitionWithoutHostTypes(
+        _ definition: RuntimeTemplateDefinition
+    ) throws {
+        switch definition {
+        case let .globals(members, types):
+            for member in members { try installTemplateGlobal(member) }
+            for type in types {
+                guard case let .value(value) = type else {
+                    throw JavaScriptError(
+                        kind: .internalFailure,
+                        message: "Unexpected host type in a static provisioning batch."
+                    )
+                }
+                try engine.publishGlobalValueType(value)
+            }
+        case let .object(name, documentation, root, members, _):
+            _ = try engine.registerExport(
+                named: name,
+                documentation: documentation,
+                root: root,
+                members: members,
+                settle: bindingSettlement
+            )
+        case let .module(specifier, documentation, members, types):
+            let typeMembers = types.map { type in
+                JavaScriptExportMemberDefinition(
+                    name: type.name,
+                    documentation: type.environmentDescription.documentation,
+                    sourceLocation: type.environmentDescription.sourceLocation,
+                    validationMessage: nil,
+                    storage: .type(type)
+                )
+            }
+            try engine.registerSwiftModule(
+                specifier: specifier,
+                documentation: documentation,
+                members: members + typeMembers,
+                settle: bindingSettlement
+            )
+        }
+    }
+
+    internal func installType(
+        _ definition: AnyJavaScriptTypeDefinition,
+        at location: JavaScriptTypeLocation
+    ) async throws {
+        switch definition {
+        case let .value(value):
+            try location.validate(scope: value.schema.scope, typeName: value.name)
+            switch location {
+            case .global:
+                try engine.publishGlobalValueType(value)
+            case .module:
+                _ = try engine.registerValueType(value, location: location)
+            }
+        case let .host(host):
+            try location.validate(scope: host.scope, typeName: host.name)
+            let identifier = try engine.withEngineEntry(drainJobs: false) {
+                try engine.reserveHostType(host, location: location)
+            }
+            do {
+                let members = try await host.materializeInstanceMembers(self, identifier)
+                let function = try engine.withEngineEntry {
+                    try engine.registerHostType(
+                        host,
+                        identifier: identifier,
+                        location: location,
+                        instanceMembers: members,
+                        settle: bindingSettlement
+                    )
+                }
+                if case .global = location {
+                    try engine.withEngineEntry {
+                        try engine.publishGlobalHostType(host, function: function)
+                    }
+                }
+            } catch {
+                engine.cancelHostTypeReservation(host)
+                throw error
+            }
+        }
+    }
+
+    internal func materializeTypes(
+        _ definitions: [AnyJavaScriptTypeDefinition],
+        at location: JavaScriptTypeLocation
+    ) async throws -> [JavaScriptExportMemberDefinition] {
+        var result: [JavaScriptExportMemberDefinition] = []
+        var reservedHosts: [AnyJavaScriptHostTypeDefinition] = []
+        do {
+            for definition in definitions {
+                switch definition {
+                case .value:
+                    if case let .value(value) = definition {
+                        try location.validate(scope: value.schema.scope, typeName: value.name)
+                    }
+                    result.append(
+                        JavaScriptExportMemberDefinition(
+                            name: definition.name,
+                            documentation: definition.environmentDescription.documentation,
+                            sourceLocation: definition.environmentDescription.sourceLocation,
+                            validationMessage: nil,
+                            storage: .type(definition)
+                        )
+                    )
+                case let .host(host):
+                    try location.validate(scope: host.scope, typeName: host.name)
+                    let identifier = try engine.withEngineEntry(drainJobs: false) {
+                        try engine.reserveHostType(host, location: location)
+                    }
+                    reservedHosts.append(host)
+                    let members = try await host.materializeInstanceMembers(self, identifier)
+                    result.append(
+                        JavaScriptExportMemberDefinition(
+                            name: host.name,
+                            documentation: host.documentation,
+                            sourceLocation: host.sourceLocation,
+                            validationMessage: nil,
+                            storage: .materializedHostType(
+                                host,
+                                identifier: identifier,
+                                instanceMembers: members
+                            )
+                        )
+                    )
+                }
+            }
+        } catch {
+            for host in reservedHosts {
+                engine.cancelHostTypeReservation(host)
+            }
+            throw error
+        }
+        return result
     }
 
     private func reserveCapacity(for plan: RuntimeTemplateProvisioningPlan) {
@@ -250,7 +406,9 @@ extension JavaScriptRuntime {
 private extension RuntimeTemplateDefinition {
     var members: [JavaScriptExportMemberDefinition] {
         switch self {
-        case let .globals(value), let .object(_, _, _, value), let .module(_, _, value):
+        case let .globals(value, _),
+             let .object(_, _, _, value, _),
+             let .module(_, _, value, _):
             return value
         }
     }
@@ -264,7 +422,7 @@ private extension RuntimeTemplateDefinition {
 
     var globalCount: Int {
         switch self {
-        case let .globals(value): return value.count
+        case let .globals(value, types): return value.count + types.count
         case .object: return 1
         case .module: return 0
         }

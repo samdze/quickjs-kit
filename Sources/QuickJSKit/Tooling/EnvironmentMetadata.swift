@@ -49,14 +49,34 @@ internal struct EnvironmentValueDescription: Sendable, Hashable {
 
 internal enum EnvironmentMemberDescription: Sendable, Hashable {
     case function(EnvironmentFunctionDescription)
+    case type(EnvironmentTypeDescription)
     case value(EnvironmentValueDescription)
 
     internal var name: String {
         switch self {
         case let .function(function): function.name
+        case let .type(type): type.name
         case let .value(value): value.name
         }
     }
+}
+
+internal struct EnvironmentTypeDescription: Sendable, Hashable {
+    internal enum Kind: Sendable, Hashable {
+        case structure
+        case enumeration(cases: [TypeScriptEnumCase])
+        case host(
+            constructors: [EnvironmentFunctionDescription],
+            staticMembers: [EnvironmentMemberDescription],
+            instanceMembers: [EnvironmentMemberDescription]
+        )
+    }
+
+    internal let name: String
+    internal var schema: TypeScriptSchema?
+    internal let documentation: TypeScriptDocumentation?
+    internal let sourceLocation: TypeScriptSourceLocation?
+    internal let kind: Kind
 }
 
 internal enum EnvironmentGlobalDescription: Sendable, Hashable {
@@ -66,12 +86,14 @@ internal enum EnvironmentGlobalDescription: Sendable, Hashable {
         documentation: TypeScriptDocumentation?,
         members: [EnvironmentMemberDescription]
     )
+    case type(EnvironmentTypeDescription)
     case value(EnvironmentValueDescription)
 
     internal var name: String {
         switch self {
         case let .function(function): function.name
         case let .object(name, _, _): name
+        case let .type(type): type.name
         case let .value(value): value.name
         }
     }
@@ -135,6 +157,10 @@ extension JavaScriptExportMemberDefinition {
                     isReadOnly: true
                 )
             )
+        case let .type(definition):
+            return .type(definition.environmentDescription)
+        case let .materializedHostType(definition, _, _):
+            return .type(definition.environmentDescription)
         }
     }
 }

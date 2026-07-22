@@ -2,6 +2,8 @@ internal final class JavaScriptRuntimeState {
     internal let engine: QuickJSEngine
     internal var nextRootIdentifier: UInt64 = 1
     internal var roots: [UInt64: AnyObject] = [:]
+    internal var rootRetainCounts: [UInt64: UInt64] = [:]
+    internal var hostRootIdentifiers: Set<UInt64> = []
 
     internal init(engine: QuickJSEngine) {
         self.engine = engine
@@ -11,6 +13,7 @@ internal final class JavaScriptRuntimeState {
         // Runtime-local Swift roots must disappear before the engine releases
         // callbacks and destroys the QuickJS context.
         roots.removeAll()
+        rootRetainCounts.removeAll()
     }
 }
 
@@ -34,15 +37,21 @@ public actor JavaScriptRuntime {
         /// duration. `nil` disables execution deadlines by default.
         public var defaultExecutionTimeout: Duration?
 
+        /// The maximum number of live Swift class or actor instances wrapped
+        /// by JavaScript in this runtime.
+        public var maximumHostObjectCount: UInt64?
+
         /// Creates a runtime configuration.
         public init(
             memoryLimit: UInt64? = nil,
             maximumStackSize: UInt64? = nil,
-            defaultExecutionTimeout: Duration? = nil
+            defaultExecutionTimeout: Duration? = nil,
+            maximumHostObjectCount: UInt64? = nil
         ) {
             self.memoryLimit = memoryLimit
             self.maximumStackSize = maximumStackSize
             self.defaultExecutionTimeout = defaultExecutionTimeout
+            self.maximumHostObjectCount = maximumHostObjectCount
         }
     }
 
@@ -163,6 +172,7 @@ public actor JavaScriptRuntime {
         let identifier = runtimeState.nextRootIdentifier
         runtimeState.nextRootIdentifier += 1
         runtimeState.roots[identifier] = root
+        runtimeState.rootRetainCounts[identifier] = 1
         return identifier
     }
 
@@ -179,8 +189,108 @@ public actor JavaScriptRuntime {
         return root
     }
 
+    internal func retainRuntimeRootForOperation(
+        from source: RuntimeRootSource,
+        receiver: ManagedQuickJSValue?
+    ) throws -> UInt64 {
+        let identifier = try runtimeRootIdentifier(
+            from: source,
+            receiver: receiver
+        )
+        try retainRuntimeRoot(identifier)
+        return identifier
+    }
+
+    internal func retainRuntimeRootForOperation(_ identifier: UInt64) throws {
+        try retainRuntimeRoot(identifier)
+    }
+
+    private func retainRuntimeRoot(_ identifier: UInt64) throws {
+        guard let count = runtimeState.rootRetainCounts[identifier],
+              count < UInt64.max else {
+            throw JavaScriptError(
+                kind: .resourceLimit,
+                message: "The runtime-local root retain count is exhausted."
+            )
+        }
+        runtimeState.rootRetainCounts[identifier] = count + 1
+    }
+
+    internal func runtimeRootIdentifier(
+        from source: RuntimeRootSource,
+        receiver: ManagedQuickJSValue?
+    ) throws -> UInt64 {
+        switch source {
+        case let .fixed(identifier):
+            return identifier
+        case let .receiver(hostTypeIdentifier):
+            guard let receiver else {
+                throw JavaScriptError(
+                    kind: .internalFailure,
+                    message: "A JavaScript receiver is required for this host member."
+                )
+            }
+            return try engine.hostRootIdentifier(
+                from: receiver.raw,
+                expectedTypeIdentifier: hostTypeIdentifier
+            )
+        }
+    }
+
+    internal func runtimeRoot<Root: AnyObject>(
+        from source: RuntimeRootSource,
+        receiver: ManagedQuickJSValue?,
+        as type: Root.Type = Root.self
+    ) throws -> Root {
+        try runtimeRoot(
+            runtimeRootIdentifier(from: source, receiver: receiver),
+            as: type
+        )
+    }
+
     internal func releaseRuntimeRoot(_ identifier: UInt64) {
+        guard let count = runtimeState.rootRetainCounts[identifier] else {
+            return
+        }
+        if count > 1 {
+            runtimeState.rootRetainCounts[identifier] = count - 1
+            return
+        }
+        runtimeState.rootRetainCounts.removeValue(forKey: identifier)
         runtimeState.roots.removeValue(forKey: identifier)
+        runtimeState.hostRootIdentifiers.remove(identifier)
+        engine.hostObjectIdentitiesByRootIdentifier.removeValue(forKey: identifier)
+    }
+
+    internal func runtimeRootObjectIdentifier(_ identifier: UInt64) throws -> ObjectIdentifier {
+        guard let root = runtimeState.roots[identifier] else {
+            throw JavaScriptError(
+                kind: .internalFailure,
+                message: "A runtime-local Swift root is no longer available."
+            )
+        }
+        return ObjectIdentifier(root)
+    }
+
+    internal func retainHostObject<Root: AnyObject>(
+        _ root: sending Root
+    ) throws -> UInt64 {
+        let identity = ObjectIdentifier(root)
+        if let existing = engine.hostObjectsBySwiftIdentity[identity] {
+            try retainRuntimeRoot(existing.rootIdentifier)
+            return existing.rootIdentifier
+        }
+        if let limit = configuration.maximumHostObjectCount,
+           UInt64(runtimeState.hostRootIdentifiers.count) >= limit {
+            throw JavaScriptError(
+                kind: .resourceLimit,
+                message: "The runtime host object limit has been reached."
+            )
+        }
+        let identifier = try retainRuntimeRoot(root)
+        runtimeState.hostRootIdentifiers.insert(identifier)
+        engine.hostObjectIdentitiesByRootIdentifier[identifier] = identity
+        return identifier
     }
 
     internal var retainedReferenceCountForTesting: Int {

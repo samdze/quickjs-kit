@@ -26,6 +26,7 @@ internal struct BoundFunction {
     internal let invoke: @Sendable (
         isolated JavaScriptRuntime,
         QuickJSEngine,
+        ManagedQuickJSValue,
         [ManagedQuickJSValue]
     ) throws -> BindingInvocation
     internal let settle: BindingSettlement
@@ -45,7 +46,7 @@ internal struct BindingDefinition: Sendable {
     ) -> BoundFunction {
         BoundFunction(
             description: draft.finalize(location: location, order: order),
-            invoke: { _, engine, arguments in
+            invoke: { _, engine, _, arguments in
                 try invoke(engine, arguments)
             },
             settle: settle
@@ -58,6 +59,7 @@ internal struct RuntimeLocalFunctionDefinition: Sendable {
     internal let invoke: @Sendable (
         isolated JavaScriptRuntime,
         QuickJSEngine,
+        ManagedQuickJSValue,
         [ManagedQuickJSValue]
     ) throws -> BindingInvocation
 
@@ -355,6 +357,16 @@ extension QuickJSEngine {
                         value: materialized.raw,
                         flags: Int32(JS_PROP_ENUMERABLE)
                     )
+                case .type:
+                    throw JavaScriptError(
+                        kind: .conversion,
+                        message: "JavaScript types can be published only as globals or module exports."
+                    )
+                case .materializedHostType:
+                    throw JavaScriptError(
+                        kind: .conversion,
+                        message: "JavaScript host types cannot be object members."
+                    )
                 }
             }
             exportRecord.childBindingIdentifiers = createdChildren
@@ -528,6 +540,7 @@ extension QuickJSEngine {
 
     fileprivate func invokeBinding(
         identifier: UInt64,
+        receiver: JSValue,
         arguments: UnsafeMutablePointer<JSValue>?,
         count: Int,
         isolatedRuntime: isolated JavaScriptRuntime
@@ -564,8 +577,17 @@ extension QuickJSEngine {
                 in: context
             )
         }
+        let ownedReceiver = ManagedQuickJSValue(
+            JS_DupValue(context, receiver),
+            in: context
+        )
         do {
-            switch try function.invoke(isolatedRuntime, self, ownedArguments) {
+            switch try function.invoke(
+                isolatedRuntime,
+                self,
+                ownedReceiver,
+                ownedArguments
+            ) {
             case let .synchronous(value):
                 return JS_DupValue(context, value.raw)
             case let .asynchronous(operation):
@@ -713,10 +735,10 @@ extension QuickJSEngine {
                 object,
                 $0,
                 JS_DupValue(context, value),
-                flags
+                flags | Int32(JS_PROP_THROW)
             )
         }
-        guard status >= 0 else { throw extractException() }
+        guard status > 0 else { throw extractException() }
     }
 
     internal func defineBoundProperty(
@@ -798,7 +820,7 @@ extension QuickJSEngine {
         return JS_Throw(context, JS_DupValue(context, error.raw))
     }
 
-    private func makeJavaScriptError(from error: any Error) -> ManagedQuickJSValue {
+    internal func makeJavaScriptError(from error: any Error) -> ManagedQuickJSValue {
         if error is CancellationError {
             return makeJavaScriptError(
                 name: "CancellationError",
@@ -826,6 +848,26 @@ extension QuickJSEngine {
         swiftType: String?
     ) -> ManagedQuickJSValue {
         let error = ManagedQuickJSValue(JS_NewError(context), in: context)
+        if ["TypeError", "RangeError", "ReferenceError", "SyntaxError"].contains(name) {
+            let global = globalObject()
+            let constructorRaw = name.withCString {
+                JS_GetPropertyStr(context, global.raw, $0)
+            }
+            let constructor = ManagedQuickJSValue(constructorRaw, in: context)
+            if JS_IsException(constructor.raw) == 0 {
+                let prototypeRaw = "prototype".withCString {
+                    JS_GetPropertyStr(context, constructor.raw, $0)
+                }
+                let prototype = ManagedQuickJSValue(prototypeRaw, in: context)
+                if JS_IsException(prototype.raw) == 0 {
+                    _ = JS_SetPrototype(context, error.raw, prototype.raw)
+                } else {
+                    clearPendingException()
+                }
+            } else {
+                clearPendingException()
+            }
+        }
         let nameValue = newString(name)
         let messageValue = newString(message)
         try? defineProperty("name", on: error.raw, value: nameValue.raw, flags: Int32(JS_PROP_CONFIGURABLE))
@@ -874,7 +916,7 @@ private let quickJSKitBindingTrampoline: @convention(c) (
     UnsafeMutablePointer<JSValue>?,
     Int32,
     UnsafeMutablePointer<JSValue>?
-) -> JSValue = { context, _, argumentCount, arguments, _, functionData in
+) -> JSValue = { context, thisValue, argumentCount, arguments, _, functionData in
     guard let context,
           let functionData,
           let runtime = JS_GetRuntime(context),
@@ -896,6 +938,7 @@ private let quickJSKitBindingTrampoline: @convention(c) (
         }
         return isolatedRuntime.engine.invokeBinding(
             identifier: UInt64(identifier),
+            receiver: thisValue,
             arguments: isolatedArguments,
             count: Int(argumentCount),
             isolatedRuntime: isolatedRuntime

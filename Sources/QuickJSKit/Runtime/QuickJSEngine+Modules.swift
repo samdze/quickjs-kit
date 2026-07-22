@@ -46,6 +46,7 @@ extension QuickJSEngine {
 
         var exports: [String: ManagedQuickJSValue] = [:]
         var bindingIdentifiers: [UInt64] = []
+        var registeredTypeIdentities: [ObjectIdentifier] = []
         do {
             for (order, member) in members.enumerated() {
                 if let message = member.validationMessage {
@@ -56,6 +57,33 @@ extension QuickJSEngine {
                     exports[member.name] = try encode(self)
                 case let .liveValue(_, value):
                     exports[member.name] = try materialize(value)
+                case let .type(definition):
+                    switch definition {
+                    case let .value(value):
+                        exports[member.name] = try registerValueType(
+                            value,
+                            location: .module(specifier)
+                        )
+                        registeredTypeIdentities.append(value.swiftIdentity)
+                    case .host:
+                        throw JavaScriptError(
+                            kind: .internalFailure,
+                            message: "Host types must be materialized by their owning runtime actor."
+                        )
+                    }
+                case let .materializedHostType(
+                    definition,
+                    identifier,
+                    instanceMembers
+                ):
+                    exports[member.name] = try registerHostType(
+                        definition,
+                        identifier: identifier,
+                        location: .module(specifier),
+                        instanceMembers: instanceMembers,
+                        settle: settle
+                    )
+                    registeredTypeIdentities.append(definition.swiftIdentity)
                 case let .function(definition):
                     let identifier = try allocateBindingIdentifier()
                     let boundFunction = definition.bind(
@@ -133,11 +161,23 @@ extension QuickJSEngine {
             environmentModules[specifier] = .swift(
                 specifier: specifier,
                 documentation: documentation,
-                members: members.map(\.environmentDescription)
+                members: members.map { member in
+                    if case let .type(definition) = member.storage {
+                        return .type(
+                            definition.environmentDescription(
+                                at: .module(specifier)
+                            )
+                        )
+                    }
+                    return member.environmentDescription
+                }
             )
         } catch {
             for identifier in bindingIdentifiers {
                 swiftBindings.removeValue(forKey: identifier)
+            }
+            for identity in registeredTypeIdentities {
+                unregisterJavaScriptType(for: identity)
             }
             throw error
         }

@@ -17,6 +17,7 @@ internal enum BindingTypeShape: Sendable, Hashable {
     case date
     case url
     case codable(swiftName: String, schema: TypeScriptSchema?)
+    case host(name: String, scope: TypeScriptDeclarationScope?)
 }
 
 internal struct BindingParameterDescription: Sendable, Hashable {
@@ -212,7 +213,7 @@ private func bindingTypeShape(forAny type: Any.Type) -> BindingTypeShape {
     return .codable(swiftName: String(reflecting: type), schema: schema)
 }
 
-private func collectedTypeScriptSchema(
+internal func collectedTypeScriptSchema(
     from provider: any TypeScriptSchemaProviding.Type
 ) -> TypeScriptSchema {
     let primary = provider.typeScriptSchema

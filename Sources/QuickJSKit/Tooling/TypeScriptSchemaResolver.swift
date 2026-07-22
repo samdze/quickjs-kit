@@ -363,6 +363,8 @@ internal struct TypeScriptSchemaResolver {
         case let .function(function): collectSchemas(from: function, into: &schemas)
         case let .object(_, _, members):
             for member in members { collectSchemas(from: member, into: &schemas) }
+        case let .type(type):
+            if let schema = type.schema { schemas.append(schema) }
         case let .value(value): collectSchemas(from: value.type, into: &schemas)
         }
     }
@@ -381,6 +383,8 @@ internal struct TypeScriptSchemaResolver {
     ) {
         switch member {
         case let .function(function): collectSchemas(from: function, into: &schemas)
+        case let .type(type):
+            if let schema = type.schema { schemas.append(schema) }
         case let .value(value): collectSchemas(from: value.type, into: &schemas)
         }
     }

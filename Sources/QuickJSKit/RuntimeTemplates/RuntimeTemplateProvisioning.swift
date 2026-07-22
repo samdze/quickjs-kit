@@ -27,18 +27,36 @@ internal enum RuntimeTemplateStartupAction: Sendable {
 }
 
 internal enum RuntimeTemplateDefinition: Sendable {
-    case globals([JavaScriptExportMemberDefinition])
+    case globals(
+        members: [JavaScriptExportMemberDefinition],
+        types: [AnyJavaScriptTypeDefinition]
+    )
     case object(
         name: String,
         documentation: TypeScriptDocumentation?,
         root: (any AnyObject & Sendable)?,
-        members: [JavaScriptExportMemberDefinition]
+        members: [JavaScriptExportMemberDefinition],
+        types: [AnyJavaScriptTypeDefinition]
     )
     case module(
         specifier: String,
         documentation: TypeScriptDocumentation?,
-        members: [JavaScriptExportMemberDefinition]
+        members: [JavaScriptExportMemberDefinition],
+        types: [AnyJavaScriptTypeDefinition]
     )
+}
+
+internal extension RuntimeTemplateDefinition {
+    var containsHostTypes: Bool {
+        let types: [AnyJavaScriptTypeDefinition] = switch self {
+        case let .globals(_, types), let .object(_, _, _, _, types),
+             let .module(_, _, _, types): types
+        }
+        return types.contains {
+            if case .host = $0 { return true }
+            return false
+        }
+    }
 }
 
 internal struct RuntimeTemplateInstanceDefinition: Sendable {
@@ -131,20 +149,95 @@ internal struct RuntimeTemplateProvisioningPlan: Sendable {
     private static func validateDefinitions(
         _ definitions: [RuntimeTemplateDefinition]
     ) throws {
+        var publishedTypeIdentities: Set<ObjectIdentifier> = []
         for definition in definitions {
             switch definition {
-            case let .globals(members):
+            case let .globals(members, types):
                 try validateMembers(members, container: "global definitions")
-            case let .object(name, documentation, _, members):
+                try validateTypes(types, location: .global)
+                try validateUniqueNames(
+                    members.map(\.name) + types.map(\.name),
+                    message: "A global JavaScript name cannot be published more than once."
+                )
+                try collectUniqueTypeIdentities(
+                    types,
+                    into: &publishedTypeIdentities
+                )
+            case let .object(name, documentation, _, members, types):
                 if let message = BindingValidation.nameMessage(name, role: "Export names") {
                     throw JavaScriptError(kind: .conversion, message: message)
                 }
                 try validateDocumentation(documentation)
                 try validateMembers(members, container: "an object export")
-            case let .module(specifier, documentation, members):
+                guard types.isEmpty else {
+                    throw JavaScriptError(
+                        kind: .conversion,
+                        message: "JavaScript types can be published only as globals or module exports."
+                    )
+                }
+            case let .module(specifier, documentation, members, types):
                 try validateModuleSpecifier(specifier)
                 try validateDocumentation(documentation)
                 try validateMembers(members, container: "a Swift module")
+                try validateTypes(types, location: .module(specifier))
+                try validateUniqueNames(
+                    members.map(\.name) + types.map(\.name),
+                    message: "A Swift module export name cannot be published more than once."
+                )
+                try collectUniqueTypeIdentities(
+                    types,
+                    into: &publishedTypeIdentities
+                )
+            }
+        }
+    }
+
+    private static func collectUniqueTypeIdentities(
+        _ types: [AnyJavaScriptTypeDefinition],
+        into identities: inout Set<ObjectIdentifier>
+    ) throws {
+        for type in types {
+            guard identities.insert(type.swiftIdentity).inserted else {
+                throw JavaScriptError(
+                    kind: .conversion,
+                    message: "A Swift type can have only one runtime location in a JavaScript environment."
+                )
+            }
+        }
+    }
+
+    private static func validateTypes(
+        _ types: [AnyJavaScriptTypeDefinition],
+        location: JavaScriptTypeLocation
+    ) throws {
+        try validateUniqueNames(
+            types.map(\.name),
+            message: "A JavaScript environment cannot publish the same type name more than once."
+        )
+        for type in types {
+            if let message = BindingValidation.nameMessage(
+                type.name,
+                role: "JavaScript type names"
+            ) {
+                throw JavaScriptError(kind: .conversion, message: message)
+            }
+            let scope: TypeScriptDeclarationScope?
+            switch type {
+            case let .value(definition): scope = definition.schema.scope
+            case let .host(definition): scope = definition.scope
+            }
+            guard let scope else { continue }
+            let matches: Bool
+            switch (scope, location) {
+            case (.global, .global): matches = true
+            case let (.module(expected), .module(actual)): matches = expected == actual
+            default: matches = false
+            }
+            guard matches else {
+                throw JavaScriptError(
+                    kind: .conversion,
+                    message: "JavaScript type '\(type.name)' has a TypeScript scope that does not match its runtime location."
+                )
             }
         }
     }
@@ -353,9 +446,10 @@ extension RuntimeTemplateProvisioningPlan {
 private extension RuntimeTemplateDefinition {
     var environmentGlobals: [EnvironmentGlobalDescription] {
         switch self {
-        case let .globals(members):
+        case let .globals(members, types):
             return members.map(\.environmentGlobalDescription)
-        case let .object(name, documentation, _, members):
+                + types.map { .type($0.environmentDescription(at: .global)) }
+        case let .object(name, documentation, _, members, _):
             return [
                 .object(
                     name: name,
@@ -369,13 +463,16 @@ private extension RuntimeTemplateDefinition {
     }
 
     var environmentModule: EnvironmentModuleDescription? {
-        guard case let .module(specifier, documentation, members) = self else {
+        guard case let .module(specifier, documentation, members, types) = self else {
             return nil
         }
         return .swift(
             specifier: specifier,
             documentation: documentation,
             members: members.map(\.environmentDescription)
+                + types.map {
+                    .type($0.environmentDescription(at: .module(specifier)))
+                }
         )
     }
 }
@@ -385,6 +482,8 @@ private extension JavaScriptExportMemberDefinition {
         switch environmentDescription {
         case let .function(function):
             return .function(function)
+        case let .type(type):
+            return .type(type)
         case let .value(value):
             return .value(
                 EnvironmentValueDescription(

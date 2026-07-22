@@ -124,6 +124,14 @@ internal struct TypeScriptRenderer {
             let declaration = "declare let \(value.name): "
                 + "\(try render(value.type, from: .global, resolved: resolved));"
             return [declarationDocumentation, declaration].compactMap { $0 }.joined(separator: "\n")
+        case let .type(type):
+            return try renderRuntimeType(
+                type,
+                prefix: "declare const",
+                scope: .global,
+                resolved: resolved,
+                documentation: documentation
+            )
         case let .object(name, objectDocumentation, members):
             let declarationDocumentation = try documentation.documentation(
                 objectDocumentation,
@@ -159,6 +167,10 @@ internal struct TypeScriptRenderer {
                 resolved: resolved,
                 documentation: documentation,
                 documentationLocation: "exported method '\(objectName).\(function.name)'"
+            )
+        case .type:
+            throw TypeScriptToolingError(
+                "JavaScript types cannot be rendered inside object exports."
             )
         case let .value(value):
             let declarationDocumentation = try documentation.documentation(
@@ -263,6 +275,14 @@ internal struct TypeScriptRenderer {
                 documentation: documentation,
                 documentationLocation: "function export '\(function.name)' of module '\(specifier)'"
             )
+        case let .type(type):
+            return try renderRuntimeType(
+                type,
+                prefix: "export const",
+                scope: scope,
+                resolved: resolved,
+                documentation: documentation
+            )
         case let .value(value) where value.name == "default":
             let declarationDocumentation = try documentation.documentation(
                 value.documentation,
@@ -280,6 +300,128 @@ internal struct TypeScriptRenderer {
             let declaration = "export const \(value.name): "
                 + "\(try render(value.type, from: scope, resolved: resolved));"
             return [declarationDocumentation, declaration].compactMap { $0 }.joined(separator: "\n")
+        }
+    }
+
+    private func renderRuntimeType(
+        _ type: EnvironmentTypeDescription,
+        prefix: String,
+        scope: ResolvedTypeScriptScope,
+        resolved: ResolvedTypeScriptEnvironment,
+        documentation: TypeScriptTSDocRenderer
+    ) throws -> String {
+        let renderedDocumentation = try documentation.documentation(
+            type.documentation,
+            at: "JavaScript type '\(type.name)'"
+        )
+        let declaration: String
+        switch type.kind {
+        case .structure:
+            declaration = "\(prefix) \(type.name): {\n"
+                + "    new(value: \(type.name)): \(type.name);\n"
+                + "};"
+        case let .enumeration(cases):
+            let properties = cases.map { enumCase in
+                "    readonly \(propertyKey(enumCase.name)): "
+                    + "\(renderTypeScriptLiteral(enumCase.value));"
+            }.joined(separator: "\n")
+            declaration = "\(prefix) \(type.name): {\n"
+                + "    (value: \(type.name)): \(type.name);\n"
+                + properties + "\n};"
+        case let .host(constructors, staticMembers, instanceMembers):
+            let classPrefix = prefix.hasPrefix("export") ? "export class" : "declare class"
+            var members: [String] = []
+            for constructor in constructors {
+                let parameters = try renderParameters(
+                    constructor.parameters,
+                    from: scope,
+                    resolved: resolved
+                )
+                let docs = try documentation.functionDocumentation(
+                    constructor,
+                    at: "constructor of JavaScript host type '\(type.name)'"
+                )
+                let signature = constructor.effects.isAsync
+                    ? "static create(\(parameters)): Promise<\(type.name)>;"
+                    : "constructor(\(parameters));"
+                members.append(
+                    [docs, signature]
+                        .compactMap { $0 }
+                        .joined(separator: "\n")
+                )
+            }
+            for member in staticMembers {
+                members.append(
+                    try renderHostMember(
+                        member,
+                        prefix: "static ",
+                        scope: scope,
+                        resolved: resolved,
+                        documentation: documentation,
+                        owner: type.name
+                    )
+                )
+            }
+            for member in instanceMembers {
+                members.append(
+                    try renderHostMember(
+                        member,
+                        prefix: "",
+                        scope: scope,
+                        resolved: resolved,
+                        documentation: documentation,
+                        owner: type.name
+                    )
+                )
+            }
+            declaration = "\(classPrefix) \(type.name) {\n"
+                + indent(members.joined(separator: "\n\n"))
+                + "\n}"
+        }
+        return [renderedDocumentation, declaration].compactMap { $0 }
+            .joined(separator: "\n")
+    }
+
+    private func renderHostMember(
+        _ member: EnvironmentMemberDescription,
+        prefix: String,
+        scope: ResolvedTypeScriptScope,
+        resolved: ResolvedTypeScriptEnvironment,
+        documentation: TypeScriptTSDocRenderer,
+        owner: String
+    ) throws -> String {
+        switch member {
+        case let .function(function):
+            let parameters = try renderParameters(
+                function.parameters,
+                from: scope,
+                resolved: resolved
+            )
+            let result = try renderFunctionResult(
+                function,
+                from: scope,
+                resolved: resolved
+            )
+            let docs = try documentation.functionDocumentation(
+                function,
+                at: "member '\(function.name)' of host type '\(owner)'"
+            )
+            let declaration = "\(prefix)\(propertyKey(function.name))"
+                + "(\(parameters)): \(result);"
+            return [docs, declaration].compactMap { $0 }.joined(separator: "\n")
+        case let .value(value):
+            let docs = try documentation.documentation(
+                value.documentation,
+                at: "property '\(value.name)' of host type '\(owner)'"
+            )
+            let readonly = value.isReadOnly ? "readonly " : ""
+            let declaration = "\(prefix)\(readonly)\(propertyKey(value.name)): "
+                + "\(try render(value.type, from: scope, resolved: resolved));"
+            return [docs, declaration].compactMap { $0 }.joined(separator: "\n")
+        case .type:
+            throw TypeScriptToolingError(
+                "A JavaScript host type cannot contain another runtime type."
+            )
         }
     }
 
@@ -384,6 +526,66 @@ internal struct TypeScriptRenderer {
                 )
             }
             return "unknown"
+        case let .host(name, declaredScope):
+            let hostScope: TypeScriptDeclarationScope?
+            if let declaredScope {
+                hostScope = declaredScope
+            } else {
+                hostScope = try inferredHostTypeScope(named: name, from: scope)
+            }
+            guard let hostScope else { return name }
+            return renderHostReference(name, scope: hostScope, from: scope)
+        }
+    }
+
+    private func inferredHostTypeScope(
+        named name: String,
+        from currentScope: ResolvedTypeScriptScope
+    ) throws -> TypeScriptDeclarationScope? {
+        var scopes: [TypeScriptDeclarationScope] = []
+        for global in environment.globals {
+            guard case let .type(type) = global,
+                  type.name == name,
+                  case .host = type.kind else { continue }
+            scopes.append(.global)
+        }
+        for module in environment.modules {
+            guard case let .swift(specifier, _, members) = module else { continue }
+            for member in members {
+                guard case let .type(type) = member,
+                      type.name == name,
+                      case .host = type.kind else { continue }
+                scopes.append(.module(specifier))
+            }
+        }
+        if case let .module(currentSpecifier) = currentScope,
+           scopes.contains(.module(currentSpecifier)) {
+            return .module(currentSpecifier)
+        }
+        let unique = Array(Set(scopes))
+        guard unique.count <= 1 else {
+            throw TypeScriptToolingError(
+                "JavaScript host type '\(name)' has multiple runtime locations; give its macro an explicit declaration scope."
+            )
+        }
+        return unique.first
+    }
+
+    private func renderHostReference(
+        _ name: String,
+        scope hostScope: TypeScriptDeclarationScope,
+        from currentScope: ResolvedTypeScriptScope
+    ) -> String {
+        switch hostScope {
+        case .global:
+            return name
+        case let .namespace(path):
+            return "\(path).\(name)"
+        case let .module(specifier):
+            if case let .module(current) = currentScope, current == specifier {
+                return name
+            }
+            return "import(\(quotedJSONString(specifier))).\(name)"
         }
     }
 
@@ -439,8 +641,12 @@ internal struct TypeScriptRenderer {
 
 internal func renderTypeScriptLiteral(_ literal: TypeScriptLiteral) -> String {
     switch literal {
-    case let .string(value): quotedJSONString(value)
-    case let .integer(value): String(value)
+    case let .string(value): return quotedJSONString(value)
+    case let .integer(value):
+        let limit = Int64(JavaScriptValue.maximumSafeInteger)
+        return value < -limit || value > limit
+            ? "\(value)n"
+            : String(value)
     }
 }
 

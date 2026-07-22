@@ -196,7 +196,9 @@ struct RuntimeTemplateInvariantTests {
             var builder = JavaScriptExportBuilder()
             builder.value(live, as: "live")
             var component = JavaScriptRuntimeTemplate.Component()
-            component.definitions = [.globals(builder.members)]
+            component.definitions = [
+                .globals(members: builder.members, types: []),
+            ]
             return component
         }()
 

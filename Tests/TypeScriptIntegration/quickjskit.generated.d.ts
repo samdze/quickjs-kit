@@ -58,3 +58,37 @@ declare module "host:answer" {
     export const answer: number;
     export const metadata: AnswerMetadata;
 }
+
+declare module "host:users" {
+    /** A user value validated by its runtime constructor. */
+    export interface User {
+        /** The stable user identifier. */
+        id: number | bigint;
+
+        /** The display name. */
+        name: string;
+    }
+
+    /** Validates and canonicalizes a user value. */
+    export const User: {
+        new(value: User): User;
+    };
+
+    /** The state of a user. */
+    export type UserStatus = "active" | "suspended";
+
+    /** Validates a user-status raw value. */
+    export const UserStatus: {
+        (value: UserStatus): UserStatus;
+        readonly active: "active";
+        readonly suspended: "suspended";
+    };
+
+    /** A live Swift service. */
+    export class UserService {
+        constructor();
+
+        /** Saves one user. */
+        save(user: User, status: UserStatus): Promise<void>;
+    }
+}

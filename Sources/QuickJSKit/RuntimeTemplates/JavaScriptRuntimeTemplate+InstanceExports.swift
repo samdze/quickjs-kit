@@ -69,15 +69,552 @@ extension JavaScriptRuntimeTemplate {
             self = content()
         }
 
+        /// Declares a synchronous member returning a live Swift host object.
+        internal static func hostFunction<each Argument, Result>(
+            _ name: String,
+            options: JavaScriptFunctionOptions = .init(),
+            _ body: @escaping @Sendable (Root, repeat each Argument) -> Result
+        ) -> Self where repeat each Argument: Decodable & Sendable,
+                        Result: JavaScriptHostTypeProviding & Sendable {
+            makeHostResultFunction(
+                name,
+                options: options,
+                isThrowing: false,
+                body: body
+            )
+        }
+
+        /// Declares a throwing synchronous member returning a live Swift host object.
+        internal static func hostFunction<each Argument, Result>(
+            _ name: String,
+            options: JavaScriptFunctionOptions = .init(),
+            _ body: @escaping @Sendable (Root, repeat each Argument) throws -> Result
+        ) -> Self where repeat each Argument: Decodable & Sendable,
+                        Result: JavaScriptHostTypeProviding & Sendable {
+            makeHostResultFunction(
+                name,
+                options: options,
+                isThrowing: true,
+                body: body
+            )
+        }
+
+        private static func makeHostResultFunction<each Argument,
+            Result: JavaScriptHostTypeProviding & Sendable
+        >(
+            _ name: String,
+            options: JavaScriptFunctionOptions,
+            isThrowing: Bool,
+            body: @escaping @Sendable (Root, repeat each Argument) throws -> Result
+        ) -> Self where repeat each Argument: Decodable & Sendable {
+            let parameterShapes = bindingParameterShapes(
+                repeat (each Argument).self
+            )
+            let parameters = BindingValidation.parameterNames(
+                options.parameterNames,
+                arity: parameterShapes.count
+            )
+            let draft = BindingDraft(
+                name: name,
+                parameters: zip(parameters.names, parameterShapes).map {
+                    BindingParameterDescription(
+                        name: $0,
+                        type: $1,
+                        sourceLocation: options.parameterSourceLocations[$0]
+                    )
+                },
+                result: .host(
+                    name: Result.javaScriptHostTypeName,
+                    scope: Result.javaScriptHostTypeScope
+                ),
+                effects: .init(isAsync: false, isThrowing: isThrowing),
+                documentation: options.documentation,
+                sourceLocation: options.sourceLocation
+            )
+            var result = Self()
+            result.members.append(
+                RuntimeInstanceMemberDefinition(
+                    name: name,
+                    validationMessage: parameters.message
+                        ?? BindingValidation.nameMessage(name, role: "Export member names"),
+                    environmentDescription: .function(
+                        EnvironmentFunctionDescription(draft)
+                    ),
+                    materialize: { _, rootSource in
+                        let function = RuntimeLocalFunctionDefinition(draft: draft) {
+                            runtime, engine, receiver, arguments in
+                            let decoder = BindingArgumentDecoder(
+                                engine: engine,
+                                arguments: arguments
+                            )
+                            let decoded: (repeat each Argument) =
+                                (repeat try decoder.next((each Argument).self))
+                            let root = try runtime.runtimeRoot(
+                                from: rootSource,
+                                receiver: receiver,
+                                as: Root.self
+                            )
+                            let returned = try body(root, repeat each decoded)
+                            let typeIdentifier = try engine.hostTypeIdentifier(
+                                for: Result.self
+                            )
+                            let rootIdentifier = try runtime.retainHostObject(returned)
+                            do {
+                                return .synchronous(
+                                    try engine.makeRegisteredHostObject(
+                                        rootIdentifier: rootIdentifier,
+                                        typeIdentifier: typeIdentifier
+                                    )
+                                )
+                            } catch {
+                                runtime.releaseRuntimeRoot(rootIdentifier)
+                                throw error
+                            }
+                        }
+                        return JavaScriptExportMemberDefinition(
+                            name: name,
+                            documentation: nil,
+                            validationMessage: nil,
+                            storage: .runtimeFunction(function)
+                        )
+                    }
+                )
+            )
+            return result
+        }
+
+        internal static func optionalHostFunction<each Argument,
+            Result: JavaScriptHostTypeProviding & Sendable
+        >(
+            _ name: String,
+            options: JavaScriptFunctionOptions = .init(),
+            isThrowing: Bool,
+            _ body: @escaping @Sendable (Root, repeat each Argument) throws -> Result?
+        ) -> Self where repeat each Argument: Decodable & Sendable {
+            let parameterShapes = bindingParameterShapes(
+                repeat (each Argument).self
+            )
+            let parameters = BindingValidation.parameterNames(
+                options.parameterNames,
+                arity: parameterShapes.count
+            )
+            let resultShape = BindingTypeShape.optional(
+                .host(
+                    name: Result.javaScriptHostTypeName,
+                    scope: Result.javaScriptHostTypeScope
+                )
+            )
+            let draft = BindingDraft(
+                name: name,
+                parameters: zip(parameters.names, parameterShapes).map {
+                    BindingParameterDescription(
+                        name: $0,
+                        type: $1,
+                        sourceLocation: options.parameterSourceLocations[$0]
+                    )
+                },
+                result: resultShape,
+                effects: .init(isAsync: false, isThrowing: isThrowing),
+                documentation: options.documentation,
+                sourceLocation: options.sourceLocation
+            )
+            var result = Self()
+            result.members.append(
+                RuntimeInstanceMemberDefinition(
+                    name: name,
+                    validationMessage: parameters.message
+                        ?? BindingValidation.nameMessage(
+                            name,
+                            role: "Export member names"
+                        ),
+                    environmentDescription: .function(
+                        EnvironmentFunctionDescription(draft)
+                    ),
+                    materialize: { _, rootSource in
+                        let function = RuntimeLocalFunctionDefinition(draft: draft) {
+                            runtime, engine, receiver, arguments in
+                            let decoder = BindingArgumentDecoder(
+                                engine: engine,
+                                arguments: arguments
+                            )
+                            let decoded: (repeat each Argument) =
+                                (repeat try decoder.next((each Argument).self))
+                            let root = try runtime.runtimeRoot(
+                                from: rootSource,
+                                receiver: receiver,
+                                as: Root.self
+                            )
+                            guard let returned = try body(
+                                root,
+                                repeat each decoded
+                            ) else {
+                                return .synchronous(
+                                    ManagedQuickJSValue(
+                                        quickJSNull(),
+                                        in: engine.context
+                                    )
+                                )
+                            }
+                            let typeIdentifier = try engine.hostTypeIdentifier(
+                                for: Result.self
+                            )
+                            let rootIdentifier = try runtime.retainHostObject(returned)
+                            do {
+                                return .synchronous(
+                                    try engine.makeRegisteredHostObject(
+                                        rootIdentifier: rootIdentifier,
+                                        typeIdentifier: typeIdentifier
+                                    )
+                                )
+                            } catch {
+                                runtime.releaseRuntimeRoot(rootIdentifier)
+                                throw error
+                            }
+                        }
+                        return JavaScriptExportMemberDefinition(
+                            name: name,
+                            documentation: nil,
+                            validationMessage: nil,
+                            storage: .runtimeFunction(function)
+                        )
+                    }
+                )
+            )
+            return result
+        }
+
+        internal static func runtimeIsolatedHostResultFunction<each Argument,
+            Result: JavaScriptHostTypeProviding
+        >(
+            _ name: String,
+            options: JavaScriptFunctionOptions = .init(),
+            optional: Bool = false,
+            isThrowing: Bool,
+            _ body: @escaping @Sendable (
+                isolated JavaScriptRuntime,
+                Root,
+                repeat each Argument
+            ) async throws -> Result?
+        ) -> Self where repeat each Argument: Decodable & Sendable {
+            let parameterShapes = bindingParameterShapes(
+                repeat (each Argument).self
+            )
+            let parameters = BindingValidation.parameterNames(
+                options.parameterNames,
+                arity: parameterShapes.count
+            )
+            let hostShape = BindingTypeShape.host(
+                name: Result.javaScriptHostTypeName,
+                scope: Result.javaScriptHostTypeScope
+            )
+            let draft = BindingDraft(
+                name: name,
+                parameters: zip(parameters.names, parameterShapes).map {
+                    BindingParameterDescription(
+                        name: $0,
+                        type: $1,
+                        sourceLocation: options.parameterSourceLocations[$0]
+                    )
+                },
+                result: optional ? .optional(hostShape) : hostShape,
+                effects: .init(isAsync: true, isThrowing: isThrowing),
+                documentation: options.documentation,
+                sourceLocation: options.sourceLocation
+            )
+            var result = Self()
+            result.members.append(
+                RuntimeInstanceMemberDefinition(
+                    name: name,
+                    validationMessage: parameters.message
+                        ?? BindingValidation.nameMessage(
+                            name,
+                            role: "Export member names"
+                        ),
+                    environmentDescription: .function(
+                        EnvironmentFunctionDescription(draft)
+                    ),
+                    materialize: { _, rootSource in
+                        let function = RuntimeLocalFunctionDefinition(draft: draft) {
+                            runtime, engine, receiver, arguments in
+                            let decoder = BindingArgumentDecoder(
+                                engine: engine,
+                                arguments: arguments
+                            )
+                            let decoded: (repeat each Argument) =
+                                (repeat try decoder.next((each Argument).self))
+                            let receiverIdentifier = try runtime
+                                .retainRuntimeRootForOperation(
+                                    from: rootSource,
+                                    receiver: receiver
+                                )
+                            let typeIdentifier = try engine.hostTypeIdentifier(
+                                for: Result.self
+                            )
+                            return .asynchronous { runtime in
+                                defer {
+                                    runtime.releaseRuntimeRoot(receiverIdentifier)
+                                }
+                                do {
+                                    let root = try runtime.runtimeRoot(
+                                        receiverIdentifier,
+                                        as: Root.self
+                                    )
+                                    guard let returned = try await body(
+                                        runtime,
+                                        root,
+                                        repeat each decoded
+                                    ) else {
+                                        return .success(
+                                            BindingResult { engine in
+                                                ManagedQuickJSValue(
+                                                    quickJSNull(),
+                                                    in: engine.context
+                                                )
+                                            }
+                                        )
+                                    }
+                                    let returnedIdentifier = try runtime
+                                        .retainHostObject(returned)
+                                    return .success(
+                                        BindingResult { engine in
+                                            do {
+                                                return try engine
+                                                    .makeRegisteredHostObject(
+                                                        rootIdentifier:
+                                                            returnedIdentifier,
+                                                        typeIdentifier:
+                                                            typeIdentifier
+                                                    )
+                                            } catch {
+                                                engine.releaseRuntimeRoot(
+                                                    returnedIdentifier
+                                                )
+                                                throw error
+                                            }
+                                        }
+                                    )
+                                } catch {
+                                    return .failure(error)
+                                }
+                            }
+                        }
+                        return JavaScriptExportMemberDefinition(
+                            name: name,
+                            documentation: nil,
+                            validationMessage: nil,
+                            storage: .runtimeFunction(function)
+                        )
+                    }
+                )
+            )
+            return result
+        }
+
+        /// Declares a synchronous member accepting one exact host reference.
+        internal static func hostArgumentFunction<
+            Argument: JavaScriptHostTypeProviding,
+            Result: Encodable & Sendable
+        >(
+            _ name: String,
+            options: JavaScriptFunctionOptions = .init(),
+            optional: Bool = false,
+            isThrowing: Bool,
+            _ body: @escaping @Sendable (Root, Argument?) throws -> Result
+        ) -> Self {
+            let names = BindingValidation.parameterNames(options.parameterNames, arity: 1)
+            let hostShape = BindingTypeShape.host(
+                name: Argument.javaScriptHostTypeName,
+                scope: Argument.javaScriptHostTypeScope
+            )
+            let draft = BindingDraft(
+                name: name,
+                parameters: [
+                    BindingParameterDescription(
+                        name: names.names[0],
+                        type: optional ? .optional(hostShape) : hostShape,
+                        sourceLocation: options.parameterSourceLocations[names.names[0]]
+                    )
+                ],
+                result: bindingTypeShape(for: Result.self),
+                effects: .init(isAsync: false, isThrowing: isThrowing),
+                documentation: options.documentation,
+                sourceLocation: options.sourceLocation
+            )
+            var result = Self()
+            result.members.append(
+                RuntimeInstanceMemberDefinition(
+                    name: name,
+                    validationMessage: names.message
+                        ?? BindingValidation.nameMessage(name, role: "Export member names"),
+                    environmentDescription: .function(EnvironmentFunctionDescription(draft)),
+                    materialize: { _, rootSource in
+                        let function = RuntimeLocalFunctionDefinition(draft: draft) {
+                            runtime, engine, receiver, arguments in
+                            let root = try runtime.runtimeRoot(
+                                from: rootSource,
+                                receiver: receiver,
+                                as: Root.self
+                            )
+                            let decoder = BindingArgumentDecoder(
+                                engine: engine,
+                                arguments: arguments
+                            )
+                            let argument = optional
+                                ? try decoder.nextOptionalHost(Argument.self, runtime: runtime)
+                                : try decoder.nextHost(Argument.self, runtime: runtime)
+                            return .synchronous(
+                                try engine.encode(
+                                    body(root, argument),
+                                    maximumNestingDepth:
+                                        JavaScriptEncoder.defaultMaximumNestingDepth
+                                )
+                            )
+                        }
+                        return JavaScriptExportMemberDefinition(
+                            name: name,
+                            documentation: nil,
+                            validationMessage: nil,
+                            storage: .runtimeFunction(function)
+                        )
+                    }
+                )
+            )
+            return result
+        }
+
+        internal static func runtimeIsolatedHostArgumentFunction<
+            Argument: JavaScriptHostTypeProviding,
+            Result: Sendable
+        >(
+            _ name: String,
+            options: JavaScriptFunctionOptions = .init(),
+            optional: Bool = false,
+            isThrowing: Bool,
+            resultShape: BindingTypeShape,
+            _ body: @escaping @Sendable (
+                isolated JavaScriptRuntime,
+                Root,
+                Argument?
+            ) async throws -> Result,
+            encode: @escaping @Sendable (Result) -> BindingResult
+        ) -> Self {
+            let names = BindingValidation.parameterNames(
+                options.parameterNames,
+                arity: 1
+            )
+            let hostShape = BindingTypeShape.host(
+                name: Argument.javaScriptHostTypeName,
+                scope: Argument.javaScriptHostTypeScope
+            )
+            let draft = BindingDraft(
+                name: name,
+                parameters: [
+                    BindingParameterDescription(
+                        name: names.names[0],
+                        type: optional ? .optional(hostShape) : hostShape,
+                        sourceLocation:
+                            options.parameterSourceLocations[names.names[0]]
+                    )
+                ],
+                result: resultShape,
+                effects: .init(isAsync: true, isThrowing: isThrowing),
+                documentation: options.documentation,
+                sourceLocation: options.sourceLocation
+            )
+            var result = Self()
+            result.members.append(
+                RuntimeInstanceMemberDefinition(
+                    name: name,
+                    validationMessage: names.message
+                        ?? BindingValidation.nameMessage(
+                            name,
+                            role: "Export member names"
+                        ),
+                    environmentDescription: .function(
+                        EnvironmentFunctionDescription(draft)
+                    ),
+                    materialize: { _, rootSource in
+                        let function = RuntimeLocalFunctionDefinition(draft: draft) {
+                            runtime, engine, receiver, arguments in
+                            let receiverIdentifier = try runtime
+                                .retainRuntimeRootForOperation(
+                                    from: rootSource,
+                                    receiver: receiver
+                                )
+                            do {
+                                let decoder = BindingArgumentDecoder(
+                                    engine: engine,
+                                    arguments: arguments
+                                )
+                                let argumentIdentifier = optional
+                                    ? try decoder.nextOptionalHostIdentifier(Argument.self)
+                                    : try decoder.nextHostIdentifier(Argument.self)
+                                if let argumentIdentifier {
+                                    try runtime.retainRuntimeRootForOperation(
+                                        argumentIdentifier
+                                    )
+                                }
+                                return .asynchronous { runtime in
+                                    defer {
+                                        runtime.releaseRuntimeRoot(receiverIdentifier)
+                                        if let argumentIdentifier {
+                                            runtime.releaseRuntimeRoot(argumentIdentifier)
+                                        }
+                                    }
+                                    do {
+                                        let root = try runtime.runtimeRoot(
+                                            receiverIdentifier,
+                                            as: Root.self
+                                        )
+                                        let argument = try argumentIdentifier.map {
+                                            try runtime.runtimeRoot($0, as: Argument.self)
+                                        }
+                                        return .success(
+                                            encode(
+                                                try await body(
+                                                    runtime,
+                                                    root,
+                                                    argument
+                                                )
+                                            )
+                                        )
+                                    } catch {
+                                        return .failure(error)
+                                    }
+                                }
+                            } catch {
+                                runtime.releaseRuntimeRoot(receiverIdentifier)
+                                throw error
+                            }
+                        }
+                        return JavaScriptExportMemberDefinition(
+                            name: name,
+                            documentation: nil,
+                            validationMessage: nil,
+                            storage: .runtimeFunction(function)
+                        )
+                    }
+                )
+            )
+            return result
+        }
+
         internal func materialize(
             on runtime: isolated JavaScriptRuntime,
             rootIdentifier: UInt64
+        ) async throws -> [JavaScriptExportMemberDefinition] {
+            try await materialize(on: runtime, rootSource: .fixed(rootIdentifier))
+        }
+
+        internal func materialize(
+            on runtime: isolated JavaScriptRuntime,
+            rootSource: RuntimeRootSource
         ) async throws -> [JavaScriptExportMemberDefinition] {
             var result: [JavaScriptExportMemberDefinition] = []
             result.reserveCapacity(members.count)
             for member in members {
                 result.append(
-                    try await member.materialize(runtime, rootIdentifier)
+                    try await member.materialize(runtime, rootSource)
                 )
             }
             return result
@@ -273,9 +810,10 @@ extension JavaScriptRuntimeTemplate {
                             isReadOnly: true
                         )
                     ),
-                    materialize: { runtime, rootIdentifier in
+                    materialize: { runtime, rootSource in
                         let root = try runtime.runtimeRoot(
-                            rootIdentifier,
+                            from: rootSource,
+                            receiver: nil,
                             as: Root.self
                         )
                         let value = try await produce(root)
@@ -368,10 +906,15 @@ extension JavaScriptRuntimeTemplate {
                             sourceLocation: sourceLocation
                         )
                     ),
-                    materialize: { _, rootIdentifier in
+                    materialize: { _, rootSource in
                         let getter = RuntimeLocalFunctionDefinition(draft: draft) {
-                            _, _, _ in
-                            .asynchronous { runtime in
+                            runtime, _, receiver, _ in
+                            let rootIdentifier = try runtime.retainRuntimeRootForOperation(
+                                from: rootSource,
+                                receiver: receiver
+                            )
+                            return .asynchronous { runtime in
+                                defer { runtime.releaseRuntimeRoot(rootIdentifier) }
                                 do {
                                     let root = try runtime.runtimeRoot(
                                         rootIdentifier,
@@ -450,12 +993,13 @@ extension JavaScriptRuntimeTemplate {
                             sourceLocation: sourceLocation
                         )
                     ),
-                    materialize: { _, rootIdentifier in
+                    materialize: { _, rootSource in
                         let getterDefinition = RuntimeLocalFunctionDefinition(
                             draft: getterDraft
-                        ) { runtime, engine, _ in
+                        ) { runtime, engine, receiver, _ in
                             let root = try runtime.runtimeRoot(
-                                rootIdentifier,
+                                from: rootSource,
+                                receiver: receiver,
                                 as: Root.self
                             )
                             return .synchronous(
@@ -468,9 +1012,10 @@ extension JavaScriptRuntimeTemplate {
                         }
                         let setterDefinition = set.map { setter in
                             RuntimeLocalFunctionDefinition(draft: setterDraft) {
-                                runtime, engine, arguments in
+                                runtime, engine, receiver, arguments in
                                 let root = try runtime.runtimeRoot(
-                                    rootIdentifier,
+                                    from: rootSource,
+                                    receiver: receiver,
                                     as: Root.self
                                 )
                                 let decoder = BindingArgumentDecoder(
@@ -537,12 +1082,13 @@ extension JavaScriptRuntimeTemplate {
                             sourceLocation: sourceLocation
                         )
                     ),
-                    materialize: { _, rootIdentifier in
+                    materialize: { _, rootSource in
                         let getterDefinition = RuntimeLocalFunctionDefinition(
                             draft: getterDraft
-                        ) { runtime, engine, _ in
+                        ) { runtime, engine, receiver, _ in
                             let root = try runtime.runtimeRoot(
-                                rootIdentifier,
+                                from: rootSource,
+                                receiver: receiver,
                                 as: Root.self
                             )
                             return .synchronous(
@@ -596,9 +1142,10 @@ extension JavaScriptRuntimeTemplate {
                             isReadOnly: true
                         )
                     ),
-                    materialize: { runtime, rootIdentifier in
+                    materialize: { runtime, rootSource in
                         let root = try runtime.runtimeRoot(
-                            rootIdentifier,
+                            from: rootSource,
+                            receiver: nil,
                             as: Root.self
                         )
                         let value = try await produce(runtime, root)
@@ -825,10 +1372,14 @@ extension JavaScriptRuntimeTemplate {
                 isAsync: false,
                 isThrowing: isThrowing
             )
-            appendFunction(draft) { rootIdentifier in
+            appendFunction(draft) { rootSource in
                 RuntimeLocalFunctionDefinition(draft: draft.value) {
-                    runtime, engine, arguments in
-                    let root = try runtime.runtimeRoot(rootIdentifier, as: Root.self)
+                    runtime, engine, receiver, arguments in
+                    let root = try runtime.runtimeRoot(
+                        from: rootSource,
+                        receiver: receiver,
+                        as: Root.self
+                    )
                     let decoder = BindingArgumentDecoder(
                         engine: engine,
                         arguments: arguments
@@ -860,16 +1411,21 @@ extension JavaScriptRuntimeTemplate {
                 isAsync: true,
                 isThrowing: isThrowing
             )
-            appendFunction(draft) { rootIdentifier in
+            appendFunction(draft) { rootSource in
                 RuntimeLocalFunctionDefinition(draft: draft.value) {
-                    _, engine, arguments in
+                    runtime, engine, receiver, arguments in
                     let decoder = BindingArgumentDecoder(
                         engine: engine,
                         arguments: arguments
                     )
                     let decoded: (repeat each Argument) =
                         (repeat try decoder.next((each Argument).self))
+                    let rootIdentifier = try runtime.retainRuntimeRootForOperation(
+                        from: rootSource,
+                        receiver: receiver
+                    )
                     return .asynchronous { runtime in
+                        defer { runtime.releaseRuntimeRoot(rootIdentifier) }
                         do {
                             let root = try runtime.runtimeRoot(
                                 rootIdentifier,
@@ -910,16 +1466,21 @@ extension JavaScriptRuntimeTemplate {
                 isAsync: true,
                 isThrowing: isThrowing
             )
-            appendFunction(draft) { rootIdentifier in
+            appendFunction(draft) { rootSource in
                 RuntimeLocalFunctionDefinition(draft: draft.value) {
-                    _, engine, arguments in
+                    runtime, engine, receiver, arguments in
                     let decoder = BindingArgumentDecoder(
                         engine: engine,
                         arguments: arguments
                     )
                     let decoded: (repeat each Argument) =
                         (repeat try decoder.next((each Argument).self))
+                    let rootIdentifier = try runtime.retainRuntimeRootForOperation(
+                        from: rootSource,
+                        receiver: receiver
+                    )
                     return .asynchronous { runtime in
+                        defer { runtime.releaseRuntimeRoot(rootIdentifier) }
                         do {
                             let root = try runtime.runtimeRoot(
                                 rootIdentifier,
@@ -945,7 +1506,7 @@ extension JavaScriptRuntimeTemplate {
         private mutating func appendFunction(
             _ draft: InstanceBindingDraft,
             materialize: @escaping @Sendable (
-                UInt64
+                RuntimeRootSource
             ) -> RuntimeLocalFunctionDefinition
         ) {
             members.append(
@@ -955,12 +1516,12 @@ extension JavaScriptRuntimeTemplate {
                     environmentDescription: .function(
                         EnvironmentFunctionDescription(draft.value)
                     ),
-                    materialize: { _, rootIdentifier in
+                    materialize: { _, rootSource in
                         JavaScriptExportMemberDefinition(
                             name: draft.value.name,
                             documentation: nil,
                             validationMessage: nil,
-                            storage: .runtimeFunction(materialize(rootIdentifier))
+                            storage: .runtimeFunction(materialize(rootSource))
                         )
                     }
                 )
@@ -1022,13 +1583,15 @@ internal struct RuntimeInstanceMemberDefinition<Root: AnyObject>: Sendable {
     internal let environmentDescription: EnvironmentMemberDescription
     internal let materialize: @Sendable (
         isolated JavaScriptRuntime,
-        UInt64
+        RuntimeRootSource
     ) async throws -> JavaScriptExportMemberDefinition
 
     internal var environmentGlobalDescription: EnvironmentGlobalDescription {
         switch environmentDescription {
         case let .function(function):
             return .function(function)
+        case let .type(type):
+            return .type(type)
         case let .value(value):
             return .value(
                 EnvironmentValueDescription(
@@ -1040,4 +1603,9 @@ internal struct RuntimeInstanceMemberDefinition<Root: AnyObject>: Sendable {
             )
         }
     }
+}
+
+internal enum RuntimeRootSource: Sendable, Hashable {
+    case fixed(UInt64)
+    case receiver(hostTypeIdentifier: Int32)
 }

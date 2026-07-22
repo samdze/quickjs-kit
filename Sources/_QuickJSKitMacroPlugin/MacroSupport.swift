@@ -209,6 +209,37 @@ func swiftLiteral(_ value: String) -> String {
     String(reflecting: value)
 }
 
+func signedIntegerLiteral(_ expression: ExprSyntax) -> Int64? {
+    var text = expression.trimmedDescription.replacingOccurrences(of: "_", with: "")
+    var isNegative = false
+    if text.hasPrefix("-") {
+        isNegative = true
+        text.removeFirst()
+    } else if text.hasPrefix("+") {
+        text.removeFirst()
+    }
+    let radix: Int
+    if text.hasPrefix("0x") || text.hasPrefix("0X") {
+        radix = 16
+        text.removeFirst(2)
+    } else if text.hasPrefix("0o") || text.hasPrefix("0O") {
+        radix = 8
+        text.removeFirst(2)
+    } else if text.hasPrefix("0b") || text.hasPrefix("0B") {
+        radix = 2
+        text.removeFirst(2)
+    } else {
+        radix = 10
+    }
+    guard let magnitude = UInt64(text, radix: radix) else { return nil }
+    if isNegative {
+        if magnitude == UInt64(Int64.max) + 1 { return Int64.min }
+        guard magnitude <= UInt64(Int64.max) else { return nil }
+        return -Int64(magnitude)
+    }
+    return Int64(exactly: magnitude)
+}
+
 func sourceLocationExpression(
     of declaration: some SyntaxProtocol,
     in context: some MacroExpansionContext

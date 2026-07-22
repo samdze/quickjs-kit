@@ -40,7 +40,7 @@ extension JavaScriptRuntime {
         _ specifier: String,
         documentation: TypeScriptDocumentation? = nil,
         _ configure: @Sendable (inout JavaScriptExportBuilder) -> Void
-    ) throws {
+    ) async throws {
         if let message = TypeScriptDocumentationValidation.message(for: documentation) {
             throw JavaScriptError(kind: .conversion, message: message)
         }
@@ -50,13 +50,35 @@ extension JavaScriptRuntime {
             throw JavaScriptError(kind: .conversion, message: message)
         }
         try validateLiveValues(in: builder.members)
-        try engine.withEngineEntry() {
-            try engine.registerSwiftModule(
-                specifier: specifier,
-                documentation: documentation,
-                members: builder.members,
-                settle: bindingSettlement
+        var ordinaryMembers: [JavaScriptExportMemberDefinition] = []
+        var types: [AnyJavaScriptTypeDefinition] = []
+        for member in builder.members {
+            if case let .type(definition) = member.storage {
+                types.append(definition)
+            } else {
+                ordinaryMembers.append(member)
+            }
+        }
+        do {
+            let typeMembers = try await materializeTypes(
+                types,
+                at: .module(specifier)
             )
+            try engine.withEngineEntry() {
+                try engine.registerSwiftModule(
+                    specifier: specifier,
+                    documentation: documentation,
+                    members: ordinaryMembers + typeMembers,
+                    settle: bindingSettlement
+                )
+            }
+        } catch {
+            for type in types {
+                if case let .host(host) = type {
+                    engine.cancelHostTypeReservation(host)
+                }
+            }
+            throw error
         }
     }
 }

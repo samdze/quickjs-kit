@@ -399,11 +399,23 @@ happy path.
   runtime-local non-Sendable final classes.
 - Typed live property accessors and compiler-checked runtime-isolated async
   adapters without unchecked Sendability.
-- `@TypeScriptModel` schemas for Codable structs, final classes, and raw enums.
+- Schema generation for Codable structs and raw enums through the unified
+  `@JavaScriptExport` annotation.
 - Shared DocC-to-TSDoc extraction, logical declaration origins, and Source Map
   v3 workspace artifacts.
 
-### Phase 8 — ecosystem maturity
+### Phase 8 — JavaScript-visible Swift types (completed)
+
+- One `@JavaScriptExport` macro selecting value or host semantics from the
+  declaration kind.
+- Explicit global and Swift-module publication through `JavaScriptType`.
+- Validating struct constructors and frozen raw-enum validators.
+- Constructible live Swift classes and actors with exact identity, ownership,
+  overload selection, static members, and Promise-based async factories.
+- Direct host references, host-object resource limits, complete TypeScript,
+  TSDoc, source maps, tests, and interoperability benchmarks.
+
+### Phase 9 — ecosystem maturity
 
 - Benchmarks for evaluation, conversion, callbacks, promises, and modules.
 - Compatibility policy, security guide, DocC catalog, and complete examples.

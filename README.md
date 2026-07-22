@@ -412,18 +412,21 @@ classes must be `nonisolated(nonsending)` or use the explicit
 `runtimeIsolated:` API so Swift can prove they do not cross executors. Shared
 objects still require `Sendable`.
 
-`@JavaScriptExport` discovers compatible methods and properties declared in
-the annotated actor or final class. `@JavaScriptIgnore`,
+`@JavaScriptExport` is the single compile-time annotation for Swift declarations.
+On a Codable struct or supported raw enum it generates a value schema. On a
+final class or actor it discovers compatible initializers, methods, static
+members, and live properties. `@JavaScriptIgnore`,
 `@JavaScriptName("name")`, and `@JavaScriptReadOnly` make selection explicit.
 Live properties are enumerable, non-configurable accessors; actor-isolated
 getters produce native JavaScript promises.
 
-`@TypeScriptModel` synthesizes the same `TypeScriptSchemaProviding` records as
-handwritten schemas for Codable structs, final classes, and raw string or
-integer enums:
+Annotation makes a type export-capable but does not publish it. Value schemas
+used by typed bindings enter TypeScript declarations automatically. Add
+`JavaScriptType` to a global or Swift module when JavaScript should receive the
+constructor or enum validator:
 
 ```swift
-@TypeScriptModel(scope: .namespace("Acme.Models"))
+@JavaScriptExport(scope: .module("host:users"))
 struct User: Codable, Sendable {
     /// The stable user identifier.
     let id: Int
@@ -431,9 +434,49 @@ struct User: Codable, Sendable {
     /// The display name.
     let name: String
 }
+
+@JavaScriptExport(scope: .module("host:users"))
+enum UserStatus: String, Codable, Sendable {
+    case active
+    case suspended
+}
+
+@JavaScriptExport(scope: .module("host:users"))
+final class UserService: Sendable {
+    init() {}
+
+    func save(_ user: User, status: UserStatus) async throws {
+        // Persist the user.
+    }
+}
+
+let template = try JavaScriptRuntimeTemplate {
+    SwiftModule("host:users") {
+        JavaScriptType(User.self)
+        JavaScriptType(UserStatus.self)
+        JavaScriptType(UserService.self)
+    }
+}
 ```
 
-Macro documentation is parsed from Swift documentation comments into
+```javascript
+import { User, UserStatus, UserService } from "host:users";
+
+const user = new User({ id: 42, name: "Ada" });
+const service = new UserService();
+await service.save(user, UserStatus.active);
+```
+
+Struct constructors validate and canonicalize ordinary JavaScript objects;
+they do not retain a Swift value. Enum exports are frozen callable validators.
+Final classes and actors are live host objects with exact Swift identity and
+runtime-local ownership. Direct host references are type-checked and cannot be
+forged by plain JavaScript objects. Type registration is permanent for the
+runtime lifetime and can also be performed immediately with
+`runtime.registerType(_:)` or a Swift module builder's `type(_:)` operation.
+
+Macro documentation for all four declaration kinds is parsed from Swift
+documentation comments into
 structured TSDoc. Generated workspaces include
 `quickjskit.generated.d.ts.map` by default, using logical Swift file IDs rather
 than build-machine paths. Use `typeScriptDeclarationBundle()` for the detached
@@ -625,7 +668,8 @@ ownership and registry invariants.
 ```console
 swift build
 swift test
-swift test -Xswiftc -warnings-as-errors -Xcc -Werror
+swift test -c release -Xswiftc -warnings-as-errors
+CFLAGS=-Werror swift build -c release --target CQuickJS
 swift run QuickJSKitBenchmarks --iterations 100
 ```
 

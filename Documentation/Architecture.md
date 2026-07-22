@@ -471,11 +471,13 @@ arbitrary JavaScript, host callbacks, pending jobs, or module evaluation.
 The optional `QuickJSKitMacros` product is a syntax frontend over the same
 detached export definitions used by handwritten template declarations. The
 core `QuickJSKit` target has no build-time or runtime dependency on the macro
-plugin. `@JavaScriptExport` emits `JavaScriptExportProviding`, root-aware
-functions, live property accessors, structured documentation, and logical
-source locations. `@TypeScriptModel` emits `TypeScriptSchemaProviding` and an
-explicit dependency graph. No macro-generated callback bypasses the binding,
-Promise, conversion, module, or environment registries.
+plugin. `@JavaScriptExport` emits value schemas for structs and raw enums, and
+root-aware host definitions for final classes and actors. The declaration kind
+selects one of two honest capabilities: `JavaScriptValueTypeProviding` for
+Codable values or `JavaScriptHostTypeProviding` for live references. No
+universal definition mixes value conversion with host ownership, and no
+macro-generated callback bypasses the binding, Promise, conversion, module,
+or environment registries.
 
 Per-runtime factories return `sending Root` and run on the destination
 `JavaScriptRuntime` actor. The root is immediately inserted into a runtime
@@ -502,6 +504,43 @@ JSON with UTF-16 generated columns and Base64 VLQ segments. Paths use logical
 file IDs, optional longest-prefix rewrites, and never embed an absolute build
 path unless the caller explicitly maps it. Managed workspaces own both the
 declaration and map through the existing regeneration manifest.
+
+## JavaScript-visible Swift types
+
+Runtime publication is explicit and permanent. `JavaScriptType(T.self)` lowers
+the macro-generated capability into the same template export plan used by
+functions and values. Immediate runtimes use `registerType`, while immediate
+Swift modules use their existing transactional export builder. A type may have
+one canonical global or module location in an environment; namespace-scoped
+schemas remain declaration-only.
+
+Struct constructors decode one ordinary JavaScript object through the direct
+Codable decoder, encode the temporary Swift value back through the direct
+encoder, attach the generated prototype, and discard the Swift value. Raw enum
+exports are frozen callable validators whose case properties contain canonical
+string, Number, or BigInt values. Neither representation enters the Swift root
+registry.
+
+All live classes and actors share one private QuickJS native class. Its opaque
+payload contains only a runtime root identifier and exact host type identifier.
+The runtime actor owns the Swift instance; the engine owns constructors,
+prototypes, bindings, and a borrowed identity-cache entry removed by the native
+finalizer. Active asynchronous calls increment the root retain count until
+Promise settlement so collection of the JavaScript wrapper cannot release an
+in-flight Swift receiver. Returning the same Swift object reuses its live
+wrapper without adding an owning QuickJS reference to the cache.
+
+Constructor overload selection first decodes arguments without constructing a
+Swift object, then invokes exactly one matching initializer. Synchronous
+initializers use `new`; asynchronous initializers use the generated
+Promise-returning `Type.create`. Direct host arguments verify the shared native
+class and exact registered type. Codable structs and enums continue through the
+normal value conversion path, keeping live-reference ownership out of Codable.
+
+The host-object limit belongs to runtime configuration and counts only live
+class and actor roots. Memory reporting exposes the current count and configured
+limit. Limit exhaustion is a JavaScript `RangeError` and a Swift resource-limit
+error; teardown releases roots before QuickJS context destruction.
 
 ## Test architecture
 

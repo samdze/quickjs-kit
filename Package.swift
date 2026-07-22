@@ -59,7 +59,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "QuickJSKitBenchmarks",
-            dependencies: ["QuickJSKit"],
+            dependencies: ["QuickJSKit", "QuickJSKitMacros"],
             path: "Benchmarks/QuickJSKitBenchmarks"
         ),
         .testTarget(

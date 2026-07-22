@@ -1,5 +1,35 @@
 import Foundation
 import QuickJSKit
+import QuickJSKitMacros
+
+@JavaScriptExport
+private struct BenchmarkPoint: Codable, Sendable {
+    let x: Int
+    let y: Int
+}
+
+@JavaScriptExport
+private enum BenchmarkState: String, Codable, Sendable {
+    case ready
+    case stopped
+}
+
+@JavaScriptExport
+private final class BenchmarkHost: Sendable {
+    let offset: Int
+
+    init(offset: Int) {
+        self.offset = offset
+    }
+
+    func add(_ value: Int) -> Int { value + offset }
+
+    func consume(_ point: BenchmarkPoint) -> Int { point.x + point.y + offset }
+
+    func same() -> BenchmarkHost { self }
+
+    static func double(_ value: Int) -> Int { value * 2 }
+}
 
 @main
 struct QuickJSKitBenchmarks {
@@ -104,6 +134,29 @@ struct QuickJSKitBenchmarks {
             }
         }
         let bindingTemplates = try [1, 10, 100].map(makeBindingTemplate)
+        let typeTemplate = try JavaScriptRuntimeTemplate {
+            Globals {
+                JavaScriptType(BenchmarkPoint.self)
+                JavaScriptType(BenchmarkState.self)
+                JavaScriptType(BenchmarkHost.self)
+            }
+        }
+        let typeRuntime = try await typeTemplate.makeRuntime()
+        let structProgram = JavaScriptProgram(
+            "new BenchmarkPoint({ x: 20, y: 22 }).x"
+        )
+        let enumProgram = JavaScriptProgram("BenchmarkState('ready')")
+        let hostProgram = JavaScriptProgram("new BenchmarkHost(2).add(40)")
+        let mixedProgram = JavaScriptProgram(
+            "new BenchmarkHost(2).consume({ x: 20, y: 20 })"
+        )
+        let identityProgram = JavaScriptProgram("""
+            globalThis.benchmarkHost ??= new BenchmarkHost(1);
+            benchmarkHost === benchmarkHost.same();
+            """)
+        for program in [structProgram, enumProgram, hostProgram, mixedProgram, identityProgram] {
+            try await typeRuntime.prepare(program)
+        }
         let provisioner = try JavaScriptRuntimeProvisioner(
             template: template,
             warmCapacity: 4,
@@ -240,15 +293,85 @@ struct QuickJSKitBenchmarks {
                 _ = try await provisioner.makeRuntime()
             }
         )
+        measurements.append(
+            try await measure("template-runtime-with-mixed-swift-types", iterations: iterations) {
+                _ = try await typeTemplate.makeRuntime()
+            }
+        )
+        measurements.append(
+            try await measure("swift-struct-canonicalization", iterations: iterations) {
+                let _: Int = try await typeRuntime.evaluate(structProgram)
+            }
+        )
+        measurements.append(
+            try await measure("swift-enum-validation", iterations: iterations) {
+                let _: String = try await typeRuntime.evaluate(enumProgram)
+            }
+        )
+        measurements.append(
+            try await measure("swift-host-construction-and-call", iterations: iterations) {
+                let _: Int = try await typeRuntime.evaluate(hostProgram)
+            }
+        )
+        measurements.append(
+            try await measure("mixed-value-host-call", iterations: iterations) {
+                let _: Int = try await typeRuntime.evaluate(mixedProgram)
+            }
+        )
+        measurements.append(
+            try await measure("swift-host-identity-reuse", iterations: iterations) {
+                let _: Bool = try await typeRuntime.evaluate(identityProgram)
+            }
+        )
+        measurements.append(
+            try await measure(
+                "host-allocation-garbage-collection-teardown",
+                iterations: iterations
+            ) {
+                let runtime = try await typeTemplate.makeRuntime()
+                let _: Bool = try await runtime.evaluate("""
+                    globalThis.hosts = Array.from(
+                        { length: 100 },
+                        (_, index) => new BenchmarkHost(index)
+                    );
+                    delete globalThis.hosts;
+                    true;
+                    """)
+                await runtime.collectGarbage()
+            }
+        )
 
         try await provisioner.warmUp()
         let readyRuntime = try await provisioner.makeRuntime()
         let memory = await readyRuntime.memoryUsage()
+        let hostMemoryRuntime = try await typeTemplate.makeRuntime()
+        let hostMemoryBefore = await hostMemoryRuntime.memoryUsage()
+        let _: Bool = try await hostMemoryRuntime.evaluate("""
+            globalThis.hosts = Array.from(
+                { length: 100 },
+                (_, index) => new BenchmarkHost(index)
+            );
+            true;
+            """)
+        let hostMemoryAfter = await hostMemoryRuntime.memoryUsage()
+        let hostMemoryDelta = hostMemoryAfter.usedBytes >= hostMemoryBefore.usedBytes
+            ? hostMemoryAfter.usedBytes - hostMemoryBefore.usedBytes
+            : 0
         let metrics = [
             ScalarMetric(
                 name: "ready-runtime-used-memory",
                 value: memory.usedBytes,
                 unit: "bytes"
+            ),
+            ScalarMetric(
+                name: "used-memory-per-host-instance",
+                value: hostMemoryDelta / 100,
+                unit: "bytes"
+            ),
+            ScalarMetric(
+                name: "live-host-instance-count",
+                value: (await hostMemoryRuntime.memoryUsage()).hostObjectCount,
+                unit: "objects"
             ),
         ]
         await provisioner.shutdown()

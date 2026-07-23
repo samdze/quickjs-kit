@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    name: Swift 6.3 (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, windows-2022]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - name: Verify Swift version
+        run: swift --version
+      - name: Run debug tests
+        run: swift test
+      - name: Run release tests with warnings as errors
+        run: swift test -c release -Xswiftc -warnings-as-errors
+      - name: Build standalone consumers
+        run: swift build --package-path Examples && swift build --package-path IntegrationTests/PlatformSmoke
+
+  portable-quality:
+    name: Portable quality gates
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: Tests/TypeScriptIntegration/package-lock.json
+      - name: Verify vendored QuickJS
+        run: Scripts/verify-vendored-quickjs.sh
+      - name: Build CQuickJS with warnings as errors
+        env:
+          CFLAGS: -Werror
+        run: swift build -c release --target CQuickJS
+      - name: Validate TypeScript and TSDoc
+        run: Scripts/validate-typescript.sh
+      - name: Validate public symbol graphs
+        run: Scripts/check-symbol-graphs.sh
+      - name: Check API compatibility
+        run: Scripts/check-api-compatibility.sh

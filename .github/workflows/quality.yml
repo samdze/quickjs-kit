@@ -1,0 +1,96 @@
+name: Deep Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    name: DocC without warnings
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build DocC
+        run: >-
+          xcodebuild docbuild
+          -scheme QuickJSKit
+          -destination 'platform=macOS'
+          -derivedDataPath .build/docc
+          -skipMacroValidation
+          OTHER_DOCC_FLAGS='--warnings-as-errors'
+
+  sanitizer:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: AddressSanitizer
+            os: ubuntu-24.04
+            arguments: --sanitize=address
+          - name: ThreadSanitizer
+            os: macos-15
+            arguments: --sanitize=thread
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - name: Run sanitizer suite
+        env:
+          ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
+        run: swift test ${{ matrix.arguments }} --no-parallel
+
+  c-undefined-behavior:
+    name: C undefined-behavior sanitizer
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - name: Run C undefined-behavior checks
+        run: >-
+          swift test
+          -Xcc -fsanitize=undefined
+          -Xlinker -fsanitize=undefined
+
+  stress:
+    name: Repeated concurrency and teardown
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - name: Repeat sensitive suites
+        run: |
+          for iteration in 1 2 3 4 5; do
+            swift test --filter Concurrency
+            swift test --filter Promise
+            swift test --filter RuntimeProvisioner
+            swift test --filter RegistryLifetime
+            swift test --filter MacroExpansion
+          done
+
+  fuzz:
+    name: Coverage-guided fuzzing
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - name: Run fuzz campaign under AddressSanitizer
+        run: Scripts/run-fuzzing.sh 300

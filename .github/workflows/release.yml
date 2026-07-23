@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  validate-tag:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Validate semantic version and changelog
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "The tag is not a semantic vX.Y.Z version." >&2
+            exit 1
+          fi
+          version="${GITHUB_REF_NAME#v}"
+          if ! grep -E -q "^## \\[?${version//./\\.}\\]?" CHANGELOG.md; then
+            echo "CHANGELOG.md has no entry for $version." >&2
+            exit 1
+          fi
+
+  readiness:
+    needs: validate-tag
+    uses: ./.github/workflows/release-readiness.yml
+
+  publish:
+    name: Publish GitHub release
+    needs: readiness
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: quickjskit-readiness-${{ github.sha }}
+          path: release-artifacts
+      - name: Package release-readiness artifacts
+        run: tar -czf quickjskit-${GITHUB_REF_NAME}-artifacts.tar.gz -C release-artifacts .
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: quickjskit-${{ github.ref_name }}-artifacts.tar.gz

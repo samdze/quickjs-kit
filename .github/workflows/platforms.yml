@@ -1,0 +1,92 @@
+name: Platform Qualification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  apple-devices:
+    name: ${{ matrix.platform }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: iOS
+            destination: generic/platform=iOS
+          - platform: tvOS
+            destination: generic/platform=tvOS
+          - platform: watchOS
+            destination: generic/platform=watchOS
+          - platform: visionOS
+            destination: generic/platform=visionOS
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build library product
+        run: >-
+          xcodebuild build
+          -scheme QuickJSKit
+          -destination '${{ matrix.destination }}'
+          -skipMacroValidation
+          CODE_SIGNING_ALLOWED=NO
+      - name: Build macro declarations product
+        run: >-
+          xcodebuild build
+          -scheme QuickJSKitMacros
+          -destination '${{ matrix.destination }}'
+          -skipMacroValidation
+          CODE_SIGNING_ALLOWED=NO
+      - name: Build portable consumer
+        working-directory: IntegrationTests/PlatformSmoke
+        run: >-
+          xcodebuild build
+          -scheme QuickJSKitPlatformSmoke
+          -destination '${{ matrix.destination }}'
+          -skipMacroValidation
+          CODE_SIGNING_ALLOWED=NO
+
+  android:
+    name: Android AArch64 and x86-64 emulator
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+        with:
+          swift-version: "6.3.3"
+      - name: Install verified Swift Android SDK
+        run: >-
+          swift sdk install
+          https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz
+          --checksum d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5
+      - name: Install and configure Android NDK r27d
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.3.13750724"
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.3.13750724"
+          "$HOME/.swiftpm/swift-sdks/swift-6.3.3-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
+      - name: Build AArch64 consumer
+        run: >-
+          swift build
+          --package-path IntegrationTests/PlatformSmoke
+          --swift-sdk aarch64-unknown-linux-android28
+          --static-swift-stdlib
+      - name: Build x86-64 consumer
+        run: >-
+          swift build
+          --package-path IntegrationTests/PlatformSmoke
+          --swift-sdk x86_64-unknown-linux-android28
+          --static-swift-stdlib
+      - name: Run x86-64 consumer in Android emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          script: |
+            adb push IntegrationTests/PlatformSmoke/.build/x86_64-unknown-linux-android28/debug/QuickJSKitPlatformSmoke /data/local/tmp/
+            adb push "$ANDROID_HOME/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so" /data/local/tmp/
+            adb shell "cd /data/local/tmp && LD_LIBRARY_PATH=. ./QuickJSKitPlatformSmoke"

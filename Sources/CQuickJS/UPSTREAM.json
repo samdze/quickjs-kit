@@ -1,0 +1,24 @@
+{
+  "name": "QuickJS",
+  "version": "2026-06-04",
+  "source": "https://bellard.org/quickjs/quickjs-2026-06-04-2.tar.xz",
+  "archiveSHA256": "b376e839b322978313d929fd20663b11ba58b75df5a46c126dd19ea2fa70ad2a",
+  "license": "MIT",
+  "licenseFile": "LICENSE",
+  "checksumsFile": "CHECKSUMS.sha256",
+  "compiledSources": [
+    "cutils.c",
+    "dtoa.c",
+    "libregexp.c",
+    "libunicode.c",
+    "quickjs.c"
+  ],
+  "excludedComponents": [
+    "command-line tools",
+    "quickjs-libc host modules"
+  ],
+  "localFiles": [
+    "include/module.modulemap"
+  ],
+  "patches": []
+}

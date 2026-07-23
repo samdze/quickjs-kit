@@ -72,6 +72,12 @@ let package = Package(
                 "QuickJSKit",
                 "QuickJSKitMacros",
                 "_QuickJSKitMacroPlugin",
+                // The generic support product works with Swift Testing without
+                // introducing XCTest into package products.
+                .product(
+                    name: "SwiftSyntaxMacrosGenericTestSupport",
+                    package: "swift-syntax"
+                ),
             ]
         ),
     ],

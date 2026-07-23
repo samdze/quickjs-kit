@@ -420,6 +420,22 @@ members, and live properties. `@JavaScriptIgnore`,
 Live properties are enumerable, non-configurable accessors; actor-isolated
 getters produce native JavaScript promises.
 
+Macro inference is deliberately fail-closed. Stored Codable properties need
+explicit types; `Optional<T>`, `Array<T>`, `Dictionary<String, T>`, and their
+Swift sugar forms are equivalent. `CodingKeys` controls omission and encoded
+names, including for private stored properties. Computed and static properties
+are not part of a value schema. Custom Codable implementations, property
+wrappers, lazy storage, non-string dictionary keys, and unsupported generic
+containers require handwritten `TypeScriptSchemaProviding` and
+`JavaScriptValueTypeProviding` conformances instead of an inferred macro model.
+
+Host signatures are checked during expansion. Generic, failable, defaulted,
+variadic, `inout`, autoclosure, and unsupported ownership or isolation forms
+produce diagnostics at the offending syntax. JavaScript names, duplicate
+members, TSDoc parameter names, and the async-constructor `create` reservation
+are validated before runtime configuration. Static and instance members use
+separate name spaces, so the same name may intentionally exist on both.
+
 Annotation makes a type export-capable but does not publish it. Value schemas
 used by typed bindings enter TypeScript declarations automatically. Add
 `JavaScriptType` to a global or Swift module when JavaScript should receive the

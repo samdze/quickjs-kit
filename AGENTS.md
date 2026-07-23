@@ -415,6 +415,17 @@ happy path.
 - Direct host references, host-object resource limits, complete TypeScript,
   TSDoc, source maps, tests, and interoperability benchmarks.
 
+### Phase 8.1 — macro contract hardening (completed)
+
+- One syntax-aware parsed export model shared by runtime definitions, value
+  schemas, TSDoc, dependencies, and source locations.
+- Fail-closed Codable inference with equivalent optional, array, and
+  string-keyed dictionary spellings.
+- Central host-signature, naming, duplicate, accessor, and documentation
+  validation.
+- Stable diagnostic identifiers plus exact expansion and diagnostic contract
+  tests.
+
 ### Phase 9 — ecosystem maturity
 
 - Benchmarks for evaluation, conversion, callbacks, promises, and modules.

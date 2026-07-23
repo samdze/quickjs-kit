@@ -479,6 +479,21 @@ universal definition mixes value conversion with host ownership, and no
 macro-generated callback bypasses the binding, Promise, conversion, module,
 or environment registries.
 
+One normalized syntax analyzer is the source of truth for both attached macro
+roles. It classifies the declaration, resolves supported type syntax, parses
+raw enum values, applies member refinements, validates signatures and
+documentation, and records source locations. That parsed export then lowers to
+runtime definitions and TypeScript schemas. No rendered Swift source is parsed
+as type metadata, and no separate enum or documentation analyzer exists.
+
+Inference is fail-closed because a syntax macro has no resolved semantic type
+graph. Custom Codable implementations, wrappers, lazy storage, malformed
+`CodingKeys`, unsupported generic containers, and unsupported host signatures
+produce stable compile-time diagnostics. Handwritten capabilities remain the
+explicit escape hatch. The extension role suppresses a repeated validation
+error while the member role reports it, keeping multi-role expansion
+deterministic without a global macro cache.
+
 Per-runtime factories return `sending Root` and run on the destination
 `JavaScriptRuntime` actor. The root is immediately inserted into a runtime
 state object that destroys local roots before its `QuickJSEngine`. Detached

@@ -121,26 +121,29 @@ extension JavaScriptRuntime {
         }
     }
 
-    /// Returns a snapshot of this runtime's JavaScript heap usage.
-    public func memoryUsage() -> JavaScriptMemoryUsage {
+    /// Returns a snapshot of this runtime's resource usage.
+    public func resourceUsage() -> JavaScriptResourceUsage {
         do {
             return try engine.withEngineEntry(drainJobs: false) {
-                let usage = engine.memoryUsage(allocationLimit: configuration.memoryLimit)
-                return JavaScriptMemoryUsage(
+                let usage = engine.resourceUsage(allocationLimit: configuration.memoryLimit)
+                return JavaScriptResourceUsage(
                     allocatedBytes: usage.allocatedBytes,
                     allocationLimit: usage.allocationLimit,
                     usedBytes: usage.usedBytes,
                     hostObjectCount: UInt64(runtimeState.hostRootIdentifiers.count),
-                    hostObjectLimit: configuration.maximumHostObjectCount
+                    hostObjectLimit: configuration.maximumHostObjectCount,
+                    pendingHostCallCount: usage.pendingHostCallCount,
+                    pendingHostCallLimit: configuration.maximumPendingHostCallCount
                 )
             }
         } catch {
-            assertionFailure("Memory reporting unexpectedly failed: \(error)")
-            return JavaScriptMemoryUsage(
+            assertionFailure("Resource reporting unexpectedly failed: \(error)")
+            return JavaScriptResourceUsage(
                 allocatedBytes: 0,
                 allocationLimit: configuration.memoryLimit,
                 usedBytes: 0,
-                hostObjectLimit: configuration.maximumHostObjectCount
+                hostObjectLimit: configuration.maximumHostObjectCount,
+                pendingHostCallLimit: configuration.maximumPendingHostCallCount
             )
         }
     }

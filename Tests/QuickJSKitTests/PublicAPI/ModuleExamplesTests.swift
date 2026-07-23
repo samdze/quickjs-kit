@@ -182,7 +182,7 @@ struct ModuleExamplesTests {
         await gate.waitUntilEntered()
         let cancelled = Task { try await runtime.importModule("shared") }
         await Task.yield()
-        _ = await runtime.memoryUsage()
+        _ = await runtime.resourceUsage()
         cancelled.cancel()
         await gate.open()
 

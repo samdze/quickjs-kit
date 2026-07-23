@@ -79,13 +79,55 @@ struct PromiseExamplesTests {
         }
         let promise = try await runtime.evaluate("slow()")
         await gate.waitUntilEntered()
+        #expect(await runtime.resourceUsage().pendingHostCallCount == 1)
 
         try await binding.remove(cancellingInFlight: true)
+        #expect(await runtime.resourceUsage().pendingHostCallCount == 0)
 
         await #expect(throws: JavaScriptError.self) {
             let _: Int = try await runtime.decoder.decode(Int.self, from: promise)
         }
         await gate.open()
+    }
+
+    @Test("concurrent host calls never exceed their admission limit")
+    func concurrentHostCallsStayWithinLimit() async throws {
+        let runtime = try JavaScriptRuntime(configuration: .init(
+            maximumPendingHostCallCount: 4
+        ))
+        let gate = MultiGate()
+        try await runtime.function("limited") { () async -> Int in
+            await gate.wait()
+            return 42
+        }
+
+        var admitted: [JavaScriptValue] = []
+        var rejected = 0
+        for _ in 0..<8 {
+            let result = try await runtime.evaluate("""
+                try {
+                    limited()
+                } catch (error) {
+                    error instanceof RangeError
+                }
+                """)
+            if result.booleanValue == true {
+                rejected += 1
+            } else {
+                admitted.append(result)
+            }
+        }
+
+        #expect(admitted.count == 4)
+        #expect(rejected == 4)
+        #expect(await runtime.resourceUsage().pendingHostCallCount == 4)
+
+        await gate.open()
+        for promise in admitted {
+            let answer = try await runtime.decoder.decode(Int.self, from: promise)
+            #expect(answer == 42)
+        }
+        #expect(await runtime.resourceUsage().pendingHostCallCount == 0)
     }
 
     @Test("cancelling a native JavaScript promise wait removes only the Swift waiter")
@@ -142,6 +184,75 @@ struct PromiseExamplesTests {
 
         let answer = try await runtime.decoder.decode(Int.self, from: promise)
         #expect(answer == 42)
+    }
+
+    @Test("pending asynchronous host calls respect runtime backpressure")
+    func pendingHostCallsRespectLimit() async throws {
+        let runtime = try JavaScriptRuntime(configuration: .init(
+            maximumPendingHostCallCount: 1
+        ))
+        let gate = Gate()
+        try await runtime.function("slow") { () async -> Int in
+            await gate.wait()
+            return 42
+        }
+        try await runtime.function("syncAnswer") { 42 }
+
+        let first = try await runtime.evaluate("slow()")
+        await gate.waitUntilEntered()
+
+        let pending = await runtime.resourceUsage()
+        #expect(pending.pendingHostCallCount == 1)
+        #expect(pending.pendingHostCallLimit == 1)
+
+        let rejected: Bool = try await runtime.evaluate("""
+            try {
+                slow();
+                false;
+            } catch (error) {
+                error instanceof RangeError
+                    && error.message.includes("pending host-call limit");
+            }
+            """)
+        let synchronous: Int = try await runtime.evaluate("syncAnswer()")
+        #expect(rejected)
+        #expect(synchronous == 42)
+        #expect(await runtime.resourceUsage().pendingHostCallCount == 1)
+
+        await gate.open()
+        let answer = try await runtime.decoder.decode(Int.self, from: first)
+        #expect(answer == 42)
+        #expect(await runtime.resourceUsage().pendingHostCallCount == 0)
+    }
+
+    @Test("a zero pending-host-call limit rejects before starting Swift work")
+    func zeroPendingHostCallLimit() async throws {
+        actor Counter {
+            var value = 0
+            func increment() { value += 1 }
+        }
+
+        let runtime = try JavaScriptRuntime(configuration: .init(
+            maximumPendingHostCallCount: 0
+        ))
+        let counter = Counter()
+        try await runtime.function("blocked") { () async -> Int in
+            await counter.increment()
+            return 42
+        }
+
+        let rejected: Bool = try await runtime.evaluate("""
+            try {
+                blocked();
+                false;
+            } catch (error) {
+                error instanceof RangeError;
+            }
+            """)
+
+        #expect(rejected)
+        #expect(await counter.value == 0)
+        #expect(await runtime.resourceUsage().pendingHostCallCount == 0)
     }
 
     @Test("unhandled rejections are reported after a checkpoint")
@@ -210,6 +321,25 @@ struct PromiseExamplesTests {
         func open() {
             releaseContinuation?.resume()
             releaseContinuation = nil
+        }
+    }
+
+    private actor MultiGate {
+        private var isOpen = false
+        private var continuations: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            guard !isOpen else { return }
+            await withCheckedContinuation { continuations.append($0) }
+        }
+
+        func open() {
+            isOpen = true
+            let pending = continuations
+            continuations.removeAll()
+            for continuation in pending {
+                continuation.resume()
+            }
         }
     }
 }

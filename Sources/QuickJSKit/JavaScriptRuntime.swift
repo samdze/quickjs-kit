@@ -41,18 +41,46 @@ public actor JavaScriptRuntime {
         /// by JavaScript in this runtime.
         public var maximumHostObjectCount: UInt64?
 
+        /// The maximum number of asynchronous JavaScript-to-Swift calls that
+        /// may be pending at once.
+        ///
+        /// Synchronous callbacks are not counted because they complete inside
+        /// the active QuickJS call. A value of zero rejects every asynchronous
+        /// host call with JavaScript `RangeError`.
+        public var maximumPendingHostCallCount: UInt64?
+
         /// Creates a runtime configuration.
         public init(
             memoryLimit: UInt64? = nil,
             maximumStackSize: UInt64? = nil,
             defaultExecutionTimeout: Duration? = nil,
-            maximumHostObjectCount: UInt64? = nil
+            maximumHostObjectCount: UInt64? = nil,
+            maximumPendingHostCallCount: UInt64? = nil
         ) {
             self.memoryLimit = memoryLimit
             self.maximumStackSize = maximumStackSize
             self.defaultExecutionTimeout = defaultExecutionTimeout
             self.maximumHostObjectCount = maximumHostObjectCount
+            self.maximumPendingHostCallCount = maximumPendingHostCallCount
         }
+
+        /// A constrained starting point for executing untrusted JavaScript.
+        ///
+        /// This configuration limits QuickJS memory to 64 MiB, its stack to
+        /// 512 KiB, active JavaScript execution to one second, live Swift host
+        /// objects to 1,024, and pending asynchronous host calls to 256.
+        ///
+        /// This is not an operating-system sandbox. QuickJS and exported Swift
+        /// code still execute inside the application process. Use process
+        /// isolation for hostile code and customize these limits for the
+        /// application's workload.
+        public static let restricted = Configuration(
+            memoryLimit: 64 * 1_024 * 1_024,
+            maximumStackSize: 512 * 1_024,
+            defaultExecutionTimeout: .seconds(1),
+            maximumHostObjectCount: 1_024,
+            maximumPendingHostCallCount: 256
+        )
     }
 
     /// The immutable configuration used to create this runtime.

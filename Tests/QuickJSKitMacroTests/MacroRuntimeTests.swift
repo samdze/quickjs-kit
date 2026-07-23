@@ -399,12 +399,12 @@ struct MacroRuntimeTests {
             "globalThis.service = new RuntimeUserService(1); true"
         )
         #expect(installed)
-        #expect(await runtime.memoryUsage().hostObjectCount == 1)
+        #expect(await runtime.resourceUsage().hostObjectCount == 1)
         let reusedWithinLimit: Bool = try await runtime.evaluate(
             "service.same() === service"
         )
         #expect(reusedWithinLimit)
-        #expect(await runtime.memoryUsage().hostObjectCount == 1)
+        #expect(await runtime.resourceUsage().hostObjectCount == 1)
 
         let limited: Bool = try await runtime.evaluate("""
             try {
@@ -418,7 +418,7 @@ struct MacroRuntimeTests {
 
         _ = try await runtime.evaluate("delete globalThis.service")
         await runtime.collectGarbage()
-        #expect(await runtime.memoryUsage().hostObjectCount == 0)
+        #expect(await runtime.resourceUsage().hostObjectCount == 0)
     }
 
     @Test("active async host calls retain their Swift receiver")
@@ -439,7 +439,7 @@ struct MacroRuntimeTests {
         await hostCallGate.waitUntilStarted()
 
         await runtime.collectGarbage()
-        #expect(await runtime.memoryUsage().hostObjectCount == 1)
+        #expect(await runtime.resourceUsage().hostObjectCount == 1)
 
         await hostCallGate.resume(returning: 42)
         let result: Int = try await runtime.evaluate("pendingHostCall")
@@ -449,7 +449,7 @@ struct MacroRuntimeTests {
         )
         #expect(deleted)
         await runtime.collectGarbage()
-        #expect(await runtime.memoryUsage().hostObjectCount == 0)
+        #expect(await runtime.resourceUsage().hostObjectCount == 0)
     }
 
     @Test("structs and enums become explicit JavaScript value types")

@@ -617,6 +617,14 @@ extension QuickJSEngine {
         isolatedRuntime: isolated JavaScriptRuntime,
         settle: @escaping BindingSettlement
     ) throws -> JSValue {
+        if let limit = maximumPendingHostCallCount,
+           UInt64(pendingSwiftPromises.count) >= limit {
+            throw JavaScriptError(
+                kind: .resourceLimit,
+                name: "RangeError",
+                message: "The runtime pending host-call limit has been reached."
+            )
+        }
         let operationIdentifier = try allocateOperationIdentifier()
         var resolvingFunctions = [quickJSUndefined(), quickJSUndefined()]
         let promiseRaw = resolvingFunctions.withUnsafeMutableBufferPointer { buffer in

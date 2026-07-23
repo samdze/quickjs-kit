@@ -14,6 +14,17 @@ private enum BenchmarkState: String, Codable, Sendable {
     case stopped
 }
 
+private struct BenchmarkPayload: Codable, Sendable {
+    let identifier: Int
+    let name: String
+    let enabled: Bool
+}
+
+private struct BenchmarkNestedPayload: Codable, Sendable {
+    let payloads: [BenchmarkPayload]
+    let metadata: [String: [Int]]
+}
+
 @JavaScriptExport
 private final class BenchmarkHost: Sendable {
     let offset: Int
@@ -86,6 +97,11 @@ struct QuickJSKitBenchmarks {
         let arguments = CommandLine.arguments
         let iterations = try parseIterations(arguments)
         let usesJSON = arguments.contains("--json")
+        let jsonOutput = try parseOption("--json-output", in: arguments)
+        let consumerExecutable = try parseOption(
+            "--consumer-executable",
+            in: arguments
+        )
         let source = "export const answer = 42;"
         let template = try equivalentTemplate(source: source)
         let preparedProgram = JavaScriptProgram(
@@ -340,12 +356,25 @@ struct QuickJSKitBenchmarks {
                 await runtime.collectGarbage()
             }
         )
+        measurements.append(
+            contentsOf: try await additionalMeasurements(iterations: iterations)
+        )
+        if let consumerExecutable {
+            measurements.append(
+                try await measure(
+                    "standalone-consumer-startup",
+                    iterations: iterations
+                ) {
+                    try runConsumer(at: consumerExecutable)
+                }
+            )
+        }
 
         try await provisioner.warmUp()
         let readyRuntime = try await provisioner.makeRuntime()
-        let memory = await readyRuntime.memoryUsage()
+        let memory = await readyRuntime.resourceUsage()
         let hostMemoryRuntime = try await typeTemplate.makeRuntime()
-        let hostMemoryBefore = await hostMemoryRuntime.memoryUsage()
+        let hostMemoryBefore = await hostMemoryRuntime.resourceUsage()
         let _: Bool = try await hostMemoryRuntime.evaluate("""
             globalThis.hosts = Array.from(
                 { length: 100 },
@@ -353,7 +382,7 @@ struct QuickJSKitBenchmarks {
             );
             true;
             """)
-        let hostMemoryAfter = await hostMemoryRuntime.memoryUsage()
+        let hostMemoryAfter = await hostMemoryRuntime.resourceUsage()
         let hostMemoryDelta = hostMemoryAfter.usedBytes >= hostMemoryBefore.usedBytes
             ? hostMemoryAfter.usedBytes - hostMemoryBefore.usedBytes
             : 0
@@ -370,17 +399,214 @@ struct QuickJSKitBenchmarks {
             ),
             ScalarMetric(
                 name: "live-host-instance-count",
-                value: (await hostMemoryRuntime.memoryUsage()).hostObjectCount,
+                value: (await hostMemoryRuntime.resourceUsage()).hostObjectCount,
                 unit: "objects"
             ),
         ]
         await provisioner.shutdown()
 
-        if usesJSON {
-            try printJSON(measurements: measurements, metrics: metrics)
+        if usesJSON || jsonOutput != nil {
+            let data = try jsonData(
+                measurements: measurements,
+                metrics: metrics
+            )
+            if let jsonOutput {
+                try data.write(to: URL(fileURLWithPath: jsonOutput), options: .atomic)
+            }
+            if usesJSON {
+                guard let string = String(data: data, encoding: .utf8) else {
+                    throw BenchmarkError.invalidJSONOutput
+                }
+                print(string)
+            }
         } else {
             printHuman(measurements: measurements, metrics: metrics, iterations: iterations)
         }
+    }
+
+    private static func additionalMeasurements(
+        iterations: Int
+    ) async throws -> [Measurement] {
+        let conversionRuntime = try JavaScriptRuntime()
+        let payload = BenchmarkPayload(
+            identifier: 42,
+            name: "QuickJSKit",
+            enabled: true
+        )
+        let collection = Array(0..<128)
+        let binary = Data((0..<4_096).map { UInt8(truncatingIfNeeded: $0) })
+        let nestedPayload = BenchmarkNestedPayload(
+            payloads: Array(repeating: payload, count: 16),
+            metadata: ["values": collection]
+        )
+        let encodedPayload = try await conversionRuntime.encoder.encode(payload)
+        let encodedCollection = try await conversionRuntime.encoder.encode(collection)
+        let encodedBinary = try await conversionRuntime.encoder.encode(binary)
+        let encodedNested = try await conversionRuntime.encoder.encode(nestedPayload)
+
+        let promiseRuntime = try JavaScriptRuntime()
+        _ = try await promiseRuntime.function("asyncAnswer") { () async -> Int in
+            await Task.yield()
+            return 42
+        }
+        let asyncPromiseProgram = JavaScriptProgram("asyncAnswer()")
+        let fulfilledPromiseProgram = JavaScriptProgram("Promise.resolve(42)")
+        try await promiseRuntime.prepare(asyncPromiseProgram)
+        try await promiseRuntime.prepare(fulfilledPromiseProgram)
+
+        var rejectingConfiguration = JavaScriptRuntime.Configuration()
+        rejectingConfiguration.maximumPendingHostCallCount = 0
+        let rejectingRuntime = try JavaScriptRuntime(
+            configuration: rejectingConfiguration
+        )
+        _ = try await rejectingRuntime.function("rejectedAsyncCall") {
+            () async -> Int in 42
+        }
+        let rejectionProgram = JavaScriptProgram("rejectedAsyncCall()")
+        try await rejectingRuntime.prepare(rejectionProgram)
+
+        let restrictedRuntime = try JavaScriptRuntime(configuration: .restricted)
+        let restrictedProgram = JavaScriptProgram("20 + 22")
+        try await restrictedRuntime.prepare(restrictedProgram)
+
+        let accessRuntime = try JavaScriptRuntime()
+        try await accessRuntime.global.set(42, forProperty: "answer")
+        let objectValue = try await accessRuntime.evaluate("({ answer: 42 })")
+        guard let object = objectValue.objectValue else {
+            throw BenchmarkError.invalidFixture
+        }
+        let arrayValue = try await accessRuntime.evaluate("[42]")
+        guard let array = arrayValue.arrayValue else {
+            throw BenchmarkError.invalidFixture
+        }
+        try await accessRuntime.registerModule(
+            "export const answer = 42;",
+            as: "benchmark:access"
+        )
+        let module = try await accessRuntime.importModule("benchmark:access")
+
+        var measurements: [Measurement] = []
+        measurements.append(
+            try await measure("encode-primitive", iterations: iterations) {
+                _ = try await conversionRuntime.encoder.encode(42)
+            }
+        )
+        measurements.append(
+            try await measure("decode-primitive", iterations: iterations) {
+                let _: Int = try await conversionRuntime.decoder.decode(
+                    Int.self,
+                    from: JavaScriptValue(42)
+                )
+            }
+        )
+        measurements.append(
+            try await measure("encode-struct", iterations: iterations) {
+                _ = try await conversionRuntime.encoder.encode(payload)
+            }
+        )
+        measurements.append(
+            try await measure("decode-struct", iterations: iterations) {
+                let _: BenchmarkPayload = try await conversionRuntime.decoder.decode(
+                    BenchmarkPayload.self,
+                    from: encodedPayload
+                )
+            }
+        )
+        measurements.append(
+            try await measure("encode-collection", iterations: iterations) {
+                _ = try await conversionRuntime.encoder.encode(collection)
+            }
+        )
+        measurements.append(
+            try await measure("decode-collection", iterations: iterations) {
+                let _: [Int] = try await conversionRuntime.decoder.decode(
+                    [Int].self,
+                    from: encodedCollection
+                )
+            }
+        )
+        measurements.append(
+            try await measure("encode-data-4k", iterations: iterations) {
+                _ = try await conversionRuntime.encoder.encode(binary)
+            }
+        )
+        measurements.append(
+            try await measure("decode-data-4k", iterations: iterations) {
+                let _: Data = try await conversionRuntime.decoder.decode(
+                    Data.self,
+                    from: encodedBinary
+                )
+            }
+        )
+        measurements.append(
+            try await measure("encode-nested-codable", iterations: iterations) {
+                _ = try await conversionRuntime.encoder.encode(nestedPayload)
+            }
+        )
+        measurements.append(
+            try await measure("decode-nested-codable", iterations: iterations) {
+                let _: BenchmarkNestedPayload =
+                    try await conversionRuntime.decoder.decode(
+                        BenchmarkNestedPayload.self,
+                        from: encodedNested
+                    )
+            }
+        )
+        measurements.append(
+            try await measure("fulfilled-promise-latency", iterations: iterations) {
+                let _: Int = try await promiseRuntime.evaluate(
+                    fulfilledPromiseProgram
+                )
+            }
+        )
+        measurements.append(
+            try await measure("async-swift-promise-latency", iterations: iterations) {
+                let _: Int = try await promiseRuntime.evaluate(asyncPromiseProgram)
+            }
+        )
+        measurements.append(
+            try await measure("restricted-profile-evaluation", iterations: iterations) {
+                let _: Int = try await restrictedRuntime.evaluate(restrictedProgram)
+            }
+        )
+        measurements.append(
+            try await measure("pending-host-call-admission", iterations: iterations) {
+                let _: Int = try await promiseRuntime.evaluate(asyncPromiseProgram)
+            }
+        )
+        measurements.append(
+            try await measure("pending-host-call-rejection", iterations: iterations) {
+                do {
+                    let _: Int = try await rejectingRuntime.evaluate(rejectionProgram)
+                    throw BenchmarkError.expectedRejection
+                } catch let error as JavaScriptError where error.name == "RangeError" {
+                    return
+                }
+            }
+        )
+        measurements.append(
+            try await measure("global-value-access", iterations: iterations) {
+                let _: Int = try await accessRuntime.global.value(
+                    forProperty: "answer"
+                )
+            }
+        )
+        measurements.append(
+            try await measure("object-property-access", iterations: iterations) {
+                let _: Int = try await object.value(forProperty: "answer")
+            }
+        )
+        measurements.append(
+            try await measure("array-element-access", iterations: iterations) {
+                let _: Int = try await array.value(at: 0)
+            }
+        )
+        measurements.append(
+            try await measure("module-export-access", iterations: iterations) {
+                let _: Int = try await module.value(forExport: "answer")
+            }
+        )
+        return measurements
     }
 
     private static func equivalentTemplate(
@@ -456,6 +682,19 @@ struct QuickJSKitBenchmarks {
         return value
     }
 
+    private static func parseOption(
+        _ name: String,
+        in arguments: [String]
+    ) throws -> String? {
+        guard let index = arguments.firstIndex(of: name) else { return nil }
+        let valueIndex = arguments.index(after: index)
+        guard valueIndex < arguments.endIndex,
+              !arguments[valueIndex].isEmpty else {
+            throw BenchmarkError.missingOptionValue(name)
+        }
+        return arguments[valueIndex]
+    }
+
     private static func printHuman(
         measurements: [Measurement],
         metrics: [ScalarMetric],
@@ -480,10 +719,10 @@ struct QuickJSKitBenchmarks {
         }
     }
 
-    private static func printJSON(
+    private static func jsonData(
         measurements: [Measurement],
         metrics: [ScalarMetric]
-    ) throws {
+    ) throws -> Data {
         let report = JSONReport(
             measurements: measurements.map {
                 JSONMeasurement(
@@ -503,15 +742,27 @@ struct QuickJSKitBenchmarks {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(report)
-        guard let string = String(data: data, encoding: .utf8) else {
-            throw BenchmarkError.invalidJSONOutput
+        return try encoder.encode(report)
+    }
+
+    private static func runConsumer(at path: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw BenchmarkError.consumerFailed(process.terminationStatus)
         }
-        print(string)
     }
 
     private enum BenchmarkError: Error {
         case invalidIterations
+        case invalidFixture
         case invalidJSONOutput
+        case expectedRejection
+        case missingOptionValue(String)
+        case consumerFailed(Int32)
     }
 }

@@ -1,5 +1,5 @@
-/// A stable, engine-independent summary of JavaScript heap usage.
-public struct JavaScriptMemoryUsage: Sendable, Hashable {
+/// A stable, engine-independent summary of runtime resource usage.
+public struct JavaScriptResourceUsage: Sendable, Hashable {
     /// Bytes currently reserved by the QuickJS allocator.
     public let allocatedBytes: UInt64
 
@@ -15,17 +15,27 @@ public struct JavaScriptMemoryUsage: Sendable, Hashable {
     /// The configured host-object limit, or `nil` when unlimited.
     public let hostObjectLimit: UInt64?
 
+    /// The number of asynchronous JavaScript-to-Swift calls currently pending.
+    public let pendingHostCallCount: UInt64
+
+    /// The configured pending-host-call limit, or `nil` when unlimited.
+    public let pendingHostCallLimit: UInt64?
+
     internal init(
         allocatedBytes: UInt64,
         allocationLimit: UInt64?,
         usedBytes: UInt64,
         hostObjectCount: UInt64 = 0,
-        hostObjectLimit: UInt64? = nil
+        hostObjectLimit: UInt64? = nil,
+        pendingHostCallCount: UInt64 = 0,
+        pendingHostCallLimit: UInt64? = nil
     ) {
         self.allocatedBytes = allocatedBytes
         self.allocationLimit = allocationLimit
         self.usedBytes = usedBytes
         self.hostObjectCount = hostObjectCount
         self.hostObjectLimit = hostObjectLimit
+        self.pendingHostCallCount = pendingHostCallCount
+        self.pendingHostCallLimit = pendingHostCallLimit
     }
 }

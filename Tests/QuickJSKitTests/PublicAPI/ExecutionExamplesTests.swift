@@ -157,17 +157,28 @@ struct ExecutionExamplesTests {
         #expect(answer == 42)
     }
 
-    @Test("memory usage is observable and garbage collection is explicit")
-    func memoryUsageIsObservable() async throws {
+    @Test("resource usage is observable and garbage collection is explicit")
+    func resourceUsageIsObservable() async throws {
         let runtime = try JavaScriptRuntime(configuration: .init(memoryLimit: 8_000_000))
 
-        let before = await runtime.memoryUsage()
+        let before = await runtime.resourceUsage()
         _ = try await runtime.evaluate("Array.from({ length: 1_000 }, (_, i) => ({ i }))")
-        let after = await runtime.memoryUsage()
+        let after = await runtime.resourceUsage()
         await runtime.collectGarbage()
 
         #expect(before.allocationLimit == 8_000_000)
         #expect(before.allocatedBytes > 0)
         #expect(after.usedBytes > 0)
+    }
+
+    @Test("the restricted configuration provides documented resource limits")
+    func restrictedConfiguration() {
+        let configuration = JavaScriptRuntime.Configuration.restricted
+
+        #expect(configuration.memoryLimit == 64 * 1_024 * 1_024)
+        #expect(configuration.maximumStackSize == 512 * 1_024)
+        #expect(configuration.defaultExecutionTimeout == .seconds(1))
+        #expect(configuration.maximumHostObjectCount == 1_024)
+        #expect(configuration.maximumPendingHostCallCount == 256)
     }
 }

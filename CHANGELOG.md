@@ -1,0 +1,31 @@
+# Changelog
+
+All notable changes to QuickJSKit will be documented here.
+
+The format follows Keep a Changelog, and released versions will follow Semantic
+Versioning.
+
+## Unreleased
+
+### Added
+
+- A modern actor-isolated QuickJS runtime with direct Codable conversion.
+- Typed Swift bindings, native Promise bridging, ES modules, custom loaders,
+  interruption, resource limits, and runtime observability.
+- Deterministic TypeScript declarations, rich TSDoc, source maps, and managed
+  editor workspaces.
+- Declarative runtime templates, prepared programs, startup actions, and
+  prewarmed one-shot provisioning.
+- `@JavaScriptExport` support for value types and live Swift host types.
+- A restricted configuration profile and pending asynchronous host-call
+  backpressure.
+
+### Changed
+
+- Runtime resource reporting is exposed as `JavaScriptResourceUsage` through
+  `resourceUsage()`, replacing the former memory-only terminology.
+
+### Security
+
+- Added bounded pending host calls and documented the distinction between
+  in-process resource controls and operating-system isolation.

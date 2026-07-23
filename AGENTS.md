@@ -426,11 +426,17 @@ happy path.
 - Stable diagnostic identifiers plus exact expansion and diagnostic contract
   tests.
 
-### Phase 9 — ecosystem maturity
+### Phase 9 — release readiness (completed)
 
-- Benchmarks for evaluation, conversion, callbacks, promises, and modules.
-- Compatibility policy, security guide, DocC catalog, and complete examples.
-- Release automation and broad platform CI.
+- Restricted runtime defaults, pending async host-call backpressure, and unified
+  resource observability.
+- Expanded conversion, Promise, access, provisioning, and standalone startup
+  benchmarks.
+- Compatibility and security policy, complete DocC, and portable examples.
+- Reproducible vendored-source verification, dependency locks, SBOM, API
+  compatibility, fuzzing, sanitizer, and stress gates.
+- Blocking qualification for Apple platforms, Linux, Windows, and Android plus
+  non-mutating release-readiness automation.
 
 ## Design principles checklist
 

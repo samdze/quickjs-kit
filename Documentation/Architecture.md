@@ -2,7 +2,7 @@
 
 ## Scope
 
-This document describes the implemented Phase 6.1 architecture and the stable
+This document describes the implemented Phase 9 architecture and the stable
 boundaries reserved for later platform capabilities. Features identified as
 future work are design constraints, not current API promises.
 
@@ -364,10 +364,24 @@ and managed-path symlink rejection keep regeneration inside its destination.
 ## Resource observability
 
 Runtime configuration includes allocator and stack limits plus a default active
-execution timeout. `JavaScriptMemoryUsage` intentionally exposes only stable
-allocator bytes, used bytes, and the configured allocation limit; engine-
-specific counters remain internal. Garbage collection is an explicit request,
-not a promise that all host-retained values will disappear.
+execution timeout, a live host-object limit, and pending asynchronous host-call
+backpressure. `JavaScriptResourceUsage` exposes stable allocator bytes, used
+bytes, configured allocation limit, host-object count and limit, and pending
+host-call count and limit. Engine-specific counters remain internal. Garbage
+collection is an explicit request, not a promise that all host-retained values
+will disappear.
+
+Pending host-call admission occurs before a Promise capability or producer task
+is created. The actor-owned slot is released exactly once by fulfillment,
+rejection, cancellation, removal, failed publication, or teardown. Synchronous
+callbacks do not consume slots because they cannot outlive their engine call.
+
+The restricted configuration is an explicit defensive preset, not a new
+execution mode. It combines finite memory, stack, active execution, host-object,
+and pending-call limits while using the same engine path as an unrestricted
+runtime. These in-process controls reduce resource-exhaustion risk but do not
+provide native memory or capability isolation; hostile code requires a
+separately sandboxed process.
 
 ## Stable future boundaries
 
@@ -553,7 +567,7 @@ class and exact registered type. Codable structs and enums continue through the
 normal value conversion path, keeping live-reference ownership out of Codable.
 
 The host-object limit belongs to runtime configuration and counts only live
-class and actor roots. Memory reporting exposes the current count and configured
+class and actor roots. Resource reporting exposes the current count and configured
 limit. Limit exhaustion is a JavaScript `RangeError` and a Swift resource-limit
 error; teardown releases roots before QuickJS context destruction.
 

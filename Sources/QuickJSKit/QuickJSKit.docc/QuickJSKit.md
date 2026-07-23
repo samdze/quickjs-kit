@@ -16,6 +16,8 @@ let runtime = try JavaScriptRuntime()
 let answer: Int = try await runtime.evaluate("20 + 22")
 ```
 
+Follow <doc:GettingStarted> for a complete first integration.
+
 Use ``JavaScriptRuntimeTemplate`` when several runtimes need the same declared
 environment. See <doc:RuntimeTemplates>.
 
@@ -23,6 +25,13 @@ Use the optional `QuickJSKitMacros` product for checked compile-time bindings.
 See <doc:MacroExports>.
 
 ## Topics
+
+### Essentials
+
+- <doc:GettingStarted>
+- <doc:ConversionsAndErrors>
+- <doc:BindingsAndPromises>
+- <doc:ModulesAndLoaders>
 
 ### Runtime provisioning
 
@@ -51,3 +60,10 @@ See <doc:MacroExports>.
 - ``JavaScriptEnvironmentDescription``
 - ``TypeScriptSchema``
 - ``TypeScriptWorkspace``
+- <doc:TypeScriptTooling>
+
+### Operations
+
+- <doc:RunningUntrustedCode>
+- <doc:PlatformSupport>
+- <doc:OwnershipCancellationAndPerformance>

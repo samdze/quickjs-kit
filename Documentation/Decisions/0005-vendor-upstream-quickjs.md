@@ -17,6 +17,10 @@ Compile only `quickjs.c`, `dtoa.c`, `libregexp.c`, `libunicode.c`, and `cutils.c
 Exclude command-line programs and `quickjs-libc` host modules. Build the sources
 as GNU C11, matching upstream constructs such as its ARM inline assembly. The
 release archive comes from <https://bellard.org/quickjs/>.
+`Sources/CQuickJS/UPSTREAM.json` records the source URL, archive checksum,
+compiled source set, exclusions, local module map, and patches.
+`Sources/CQuickJS/CHECKSUMS.sha256` makes every retained upstream file
+machine-verifiable.
 
 ## Consequences
 

@@ -258,6 +258,20 @@ enum ExportSyntaxAnalyzer {
             )
         }
         guard let codingKeys = declarations.first else { return nil }
+        let inheritedTypes = codingKeys.inheritanceClause?.inheritedTypes.compactMap {
+            unqualifiedInheritedTypeName($0.type)
+        } ?? []
+        guard Set(inheritedTypes) == ["String", "CodingKey"],
+              inheritedTypes.count == 2 else {
+            let node = codingKeys.inheritanceClause.map(Syntax.init)
+                ?? Syntax(codingKeys.name)
+            throw macroFailure(
+                .malformedCodingKeys(
+                    "declare it as 'enum CodingKeys: String, CodingKey'."
+                ),
+                at: node
+            )
+        }
         var result: [String: String] = [:]
         var nodes: [String: Syntax] = [:]
         var encodedNames: Set<String> = []

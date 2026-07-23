@@ -257,27 +257,24 @@ struct PromiseExamplesTests {
 
     @Test("unhandled rejections are reported after a checkpoint")
     func reportsUnhandledRejections() async throws {
-        actor Recorder {
-            var errors: [JavaScriptError] = []
-            func record(_ error: JavaScriptError) { errors.append(error) }
-        }
-
         let runtime = try JavaScriptRuntime()
-        let recorder = Recorder()
+        let (errors, continuation) = AsyncStream.makeStream(
+            of: JavaScriptError.self
+        )
         await runtime.setUnhandledPromiseRejectionHandler { error in
-            Task { await recorder.record(error) }
+            continuation.yield(error)
         }
 
         _ = try await runtime.evaluate("""
             Promise.reject(new Error('unobserved'));
             undefined
             """)
-        await Task.yield()
-        await Task.yield()
 
-        let errors = await recorder.errors
-        #expect(errors.count == 1)
-        #expect(errors.first?.message == "unobserved")
+        var iterator = errors.makeAsyncIterator()
+        let error = await iterator.next()
+        continuation.finish()
+
+        #expect(error?.message == "unobserved")
     }
 
     @Test("same-checkpoint handlers and host results suppress rejection reports")

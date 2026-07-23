@@ -3,14 +3,6 @@ import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
-struct QuickJSKitMacroError: Error, CustomStringConvertible {
-    let description: String
-
-    init(_ description: String) {
-        self.description = description
-    }
-}
-
 struct ParsedDocumentation {
     var summary = ""
     var remarks: String?
@@ -286,27 +278,141 @@ func declarationName(_ declaration: some DeclGroupSyntax) throws -> String {
     if let value = declaration.as(ActorDeclSyntax.self) { return value.name.text }
     if let value = declaration.as(StructDeclSyntax.self) { return value.name.text }
     if let value = declaration.as(EnumDeclSyntax.self) { return value.name.text }
-    throw QuickJSKitMacroError("This macro does not support this declaration kind.")
+    if let value = declaration.as(ProtocolDeclSyntax.self) {
+        throw macroFailure(.unsupportedDeclaration, at: value.name)
+    }
+    throw macroFailure(.unsupportedDeclaration, at: declaration)
 }
 
-func typeScriptTypeExpression(_ source: String) -> (type: String, optional: Bool, dependency: String?) {
-    let text = source.trimmingCharacters(in: .whitespacesAndNewlines)
-    if text.hasSuffix("?") {
-        let wrapped = String(text.dropLast())
-        let resolved = typeScriptTypeExpression(wrapped)
-        return (".union([\(resolved.type), .null])", true, resolved.dependency)
+struct ResolvedTypeScriptType {
+    let expression: String
+    let isOptional: Bool
+    let dependencies: Set<String>
+}
+
+func resolveTypeScriptType(
+    _ type: TypeSyntax
+) throws -> ResolvedTypeScriptType {
+    if let optional = type.as(OptionalTypeSyntax.self) {
+        let wrapped = try resolveTypeScriptType(optional.wrappedType)
+        return .init(
+            expression: ".union([\(wrapped.expression), .null])",
+            isOptional: true,
+            dependencies: wrapped.dependencies
+        )
     }
-    if text.hasPrefix("[") && text.hasSuffix("]") {
-        let inner = String(text.dropFirst().dropLast())
-        if let colon = inner.firstIndex(of: ":"),
-           inner[..<colon].trimmingCharacters(in: .whitespaces) == "String" {
-            let value = String(inner[inner.index(after: colon)...])
-            let resolved = typeScriptTypeExpression(value)
-            return (".record(\(resolved.type))", false, resolved.dependency)
+    if let array = type.as(ArrayTypeSyntax.self) {
+        let element = try resolveTypeScriptType(array.element)
+        return .init(
+            expression: ".array(\(element.expression))",
+            isOptional: false,
+            dependencies: element.dependencies
+        )
+    }
+    if let dictionary = type.as(DictionaryTypeSyntax.self) {
+        guard unqualifiedTypeName(dictionary.key) == "String" else {
+            throw macroFailure(
+                .unsupportedValueType(type.trimmedDescription),
+                at: dictionary.key
+            )
         }
-        let resolved = typeScriptTypeExpression(inner)
-        return (".array(\(resolved.type))", false, resolved.dependency)
+        let value = try resolveTypeScriptType(dictionary.value)
+        return .init(
+            expression: ".record(\(value.expression))",
+            isOptional: false,
+            dependencies: value.dependencies
+        )
     }
+    if let identifier = type.as(IdentifierTypeSyntax.self) {
+        return try resolveIdentifierType(identifier, original: type)
+    }
+    if let member = type.as(MemberTypeSyntax.self) {
+        guard member.genericArgumentClause == nil else {
+            throw macroFailure(
+                .unsupportedValueType(type.trimmedDescription),
+                at: type
+            )
+        }
+        return resolveNamedType(
+            name: member.name.text,
+            qualifiedName: type.trimmedDescription
+        )
+    }
+    throw macroFailure(
+        .unsupportedValueType(type.trimmedDescription),
+        at: type
+    )
+}
+
+private func resolveIdentifierType(
+    _ identifier: IdentifierTypeSyntax,
+    original: TypeSyntax
+) throws -> ResolvedTypeScriptType {
+    let name = identifier.name.text
+    if let arguments = identifier.genericArgumentClause?.arguments {
+        let values = Array(arguments)
+        switch name {
+        case "Optional" where values.count == 1:
+            let wrapped = try resolveTypeScriptType(
+                try genericTypeArgument(values[0], original: original)
+            )
+            return .init(
+                expression: ".union([\(wrapped.expression), .null])",
+                isOptional: true,
+                dependencies: wrapped.dependencies
+            )
+        case "Array" where values.count == 1:
+            let element = try resolveTypeScriptType(
+                try genericTypeArgument(values[0], original: original)
+            )
+            return .init(
+                expression: ".array(\(element.expression))",
+                isOptional: false,
+                dependencies: element.dependencies
+            )
+        case "Dictionary" where values.count == 2:
+            let key = try genericTypeArgument(values[0], original: original)
+            guard unqualifiedTypeName(key) == "String" else {
+                throw macroFailure(
+                    .unsupportedValueType(original.trimmedDescription),
+                    at: key
+                )
+            }
+            let value = try resolveTypeScriptType(
+                try genericTypeArgument(values[1], original: original)
+            )
+            return .init(
+                expression: ".record(\(value.expression))",
+                isOptional: false,
+                dependencies: value.dependencies
+            )
+        default:
+            throw macroFailure(
+                .unsupportedValueType(original.trimmedDescription),
+                at: original
+            )
+        }
+    }
+    return resolveNamedType(name: name, qualifiedName: name)
+}
+
+private func genericTypeArgument(
+    _ argument: GenericArgumentSyntax,
+    original: TypeSyntax
+) throws -> TypeSyntax {
+    guard case let .type(type) = argument.argument else {
+        throw macroFailure(
+            .unsupportedValueType(original.trimmedDescription),
+            at: argument
+        )
+    }
+    return type
+}
+
+private func resolveNamedType(
+    name: String,
+    qualifiedName: String
+) -> ResolvedTypeScriptType {
     let simple: [String: String] = [
         "Bool": ".boolean", "String": ".string", "URL": ".string",
         "Float": ".number", "Double": ".number",
@@ -320,7 +426,73 @@ func typeScriptTypeExpression(_ source: String) -> (type: String, optional: Bool
         "Data": ".uint8Array", "Date": ".date",
         "JavaScriptBigInt": ".bigint",
     ]
-    if let value = simple[text] { return (value, false, nil) }
-    let name = text.split(separator: ".").last.map(String.init) ?? text
-    return (".named(\(swiftLiteral(name)))", false, text)
+    if let value = simple[name] {
+        return .init(
+            expression: value,
+            isOptional: false,
+            dependencies: []
+        )
+    }
+    return .init(
+        expression: ".named(\(swiftLiteral(name)))",
+        isOptional: false,
+        dependencies: [qualifiedName]
+    )
+}
+
+private func unqualifiedTypeName(_ type: TypeSyntax) -> String? {
+    if let identifier = type.as(IdentifierTypeSyntax.self),
+       identifier.genericArgumentClause == nil {
+        return identifier.name.text
+    }
+    if let member = type.as(MemberTypeSyntax.self),
+       member.genericArgumentClause == nil {
+        return member.name.text
+    }
+    return nil
+}
+
+func isValidJavaScriptIdentifier(_ name: String) -> Bool {
+    guard !name.isEmpty else { return false }
+    let scalars = Array(name.unicodeScalars)
+    guard let first = scalars.first,
+          isJavaScriptIdentifierStart(first) else {
+        return false
+    }
+    return scalars.dropFirst().allSatisfy(isJavaScriptIdentifierContinue)
+        && !javaScriptReservedIdentifiers.contains(name)
+}
+
+private func isJavaScriptIdentifierStart(_ scalar: UnicodeScalar) -> Bool {
+    scalar == "_" || scalar == "$"
+        || ("a"..."z").contains(Character(String(scalar)))
+        || ("A"..."Z").contains(Character(String(scalar)))
+}
+
+private func isJavaScriptIdentifierContinue(_ scalar: UnicodeScalar) -> Bool {
+    isJavaScriptIdentifierStart(scalar)
+        || ("0"..."9").contains(Character(String(scalar)))
+}
+
+private let javaScriptReservedIdentifiers: Set<String> = [
+    "await", "break", "case", "catch", "class", "const", "continue",
+    "debugger", "default", "delete", "do", "else", "enum", "export",
+    "extends", "false", "finally", "for", "function", "if", "import",
+    "in", "instanceof", "let", "new", "null", "return", "static",
+    "super", "switch", "this", "throw", "true", "try", "typeof",
+    "var", "void", "while", "with", "yield", "implements", "interface",
+    "package", "private", "protected", "public",
+]
+
+func hasUnsupportedParameterFeatures(_ parameter: FunctionParameterSyntax) -> Bool {
+    if parameter.defaultValue != nil || parameter.ellipsis != nil
+        || !parameter.attributes.isEmpty || !parameter.modifiers.isEmpty {
+        return true
+    }
+    guard let attributed = parameter.type.as(AttributedTypeSyntax.self) else {
+        return false
+    }
+    return !attributed.attributes.isEmpty
+        || !attributed.specifiers.isEmpty
+        || !attributed.lateSpecifiers.isEmpty
 }

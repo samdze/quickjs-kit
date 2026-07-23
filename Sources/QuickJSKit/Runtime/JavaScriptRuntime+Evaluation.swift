@@ -125,7 +125,10 @@ extension JavaScriptRuntime {
     public func resourceUsage() -> JavaScriptResourceUsage {
         do {
             return try engine.withEngineEntry(drainJobs: false) {
-                let usage = engine.resourceUsage(allocationLimit: configuration.memoryLimit)
+                let usage = engine.resourceUsage(
+                    allocationLimit: configuration.memoryLimit,
+                    pendingHostCallLimit: configuration.maximumPendingHostCallCount
+                )
                 return JavaScriptResourceUsage(
                     allocatedBytes: usage.allocatedBytes,
                     allocationLimit: usage.allocationLimit,

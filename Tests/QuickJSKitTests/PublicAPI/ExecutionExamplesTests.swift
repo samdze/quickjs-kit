@@ -174,11 +174,18 @@ struct ExecutionExamplesTests {
     @Test("the restricted configuration provides documented resource limits")
     func restrictedConfiguration() {
         let configuration = JavaScriptRuntime.Configuration.restricted
+        let timeout = configuration.defaultExecutionTimeout?.components
 
-        #expect(configuration.memoryLimit == 64 * 1_024 * 1_024)
-        #expect(configuration.maximumStackSize == 512 * 1_024)
-        #expect(configuration.defaultExecutionTimeout == .seconds(1))
-        #expect(configuration.maximumHostObjectCount == 1_024)
-        #expect(configuration.maximumPendingHostCallCount == 256)
+        guard
+            configuration.memoryLimit == 64 * 1_024 * 1_024,
+            configuration.maximumStackSize == 512 * 1_024,
+            timeout?.seconds == 1,
+            timeout?.attoseconds == 0,
+            configuration.maximumHostObjectCount == 1_024,
+            configuration.maximumPendingHostCallCount == 256
+        else {
+            Issue.record("The restricted configuration has unexpected limits.")
+            return
+        }
     }
 }

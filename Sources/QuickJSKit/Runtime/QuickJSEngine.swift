@@ -62,7 +62,6 @@ internal final class QuickJSEngine {
 
     // Execution
     private let defaultExecutionTimeout: Duration?
-    internal let maximumPendingHostCallCount: UInt64?
     private var executionDepth = 0
     private var activeExecution: ActiveExecution?
     internal var stackTopRefreshCountForTesting = 0
@@ -132,7 +131,6 @@ internal final class QuickJSEngine {
         self.context = context
         self.maximumJavaScriptStackSize = maximumStackSize ?? Int(JS_DEFAULT_STACK_SIZE)
         self.defaultExecutionTimeout = configuration.defaultExecutionTimeout
-        self.maximumPendingHostCallCount = configuration.maximumPendingHostCallCount
         self.callbackBridge = callbackBridge
         callbackBridge.engine = self
         JS_SetRuntimeOpaque(
@@ -205,7 +203,8 @@ internal final class QuickJSEngine {
     }
 
     internal func resourceUsage(
-        allocationLimit: UInt64?
+        allocationLimit: UInt64?,
+        pendingHostCallLimit: UInt64?
     ) -> JavaScriptResourceUsage {
         var usage = JSMemoryUsage()
         JS_ComputeMemoryUsage(runtime, &usage)
@@ -214,7 +213,7 @@ internal final class QuickJSEngine {
             allocationLimit: allocationLimit,
             usedBytes: UInt64(max(0, usage.memory_used_size)),
             pendingHostCallCount: UInt64(pendingSwiftPromises.count),
-            pendingHostCallLimit: maximumPendingHostCallCount
+            pendingHostCallLimit: pendingHostCallLimit
         )
     }
 

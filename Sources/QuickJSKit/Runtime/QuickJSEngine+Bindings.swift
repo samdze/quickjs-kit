@@ -617,7 +617,8 @@ extension QuickJSEngine {
         isolatedRuntime: isolated JavaScriptRuntime,
         settle: @escaping BindingSettlement
     ) throws -> JSValue {
-        if let limit = maximumPendingHostCallCount,
+        if let limit = isolatedRuntime.configuration
+            .maximumPendingHostCallCount,
            UInt64(pendingSwiftPromises.count) >= limit {
             throw JavaScriptError(
                 kind: .resourceLimit,

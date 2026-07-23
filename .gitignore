@@ -1,8 +1,10 @@
 .build/
 .swiftpm/
 .DS_Store
-Package.resolved
 DerivedData/
 *.xcodeproj/
 xcuserdata/
 node_modules/
+Examples/Package.resolved
+Fuzzing/Package.resolved
+IntegrationTests/PlatformSmoke/Package.resolved

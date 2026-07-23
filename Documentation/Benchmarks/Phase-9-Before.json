@@ -1,0 +1,276 @@
+{
+  "label" : "Phase 9 before changes",
+  "measurements" : [
+    {
+      "iterations" : 100,
+      "name" : "manual-equivalent-runtime",
+      "normalizedP50Nanoseconds" : 32458,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 30809.045535769303,
+      "p50Nanoseconds" : 32458,
+      "p95Nanoseconds" : 35625,
+      "p99Nanoseconds" : 38459
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-equivalent-runtime",
+      "normalizedP50Nanoseconds" : 39292,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 25450.473378804847,
+      "p50Nanoseconds" : 39292,
+      "p95Nanoseconds" : 60875,
+      "p99Nanoseconds" : 147959
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-runtime-with-1-bindings",
+      "normalizedP50Nanoseconds" : 37875,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 26402.640264026402,
+      "p50Nanoseconds" : 37875,
+      "p95Nanoseconds" : 41292,
+      "p99Nanoseconds" : 61459
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-runtime-with-10-bindings",
+      "normalizedP50Nanoseconds" : 45958,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 21758.997345402324,
+      "p50Nanoseconds" : 45958,
+      "p95Nanoseconds" : 47917,
+      "p99Nanoseconds" : 51042
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-runtime-with-100-bindings",
+      "normalizedP50Nanoseconds" : 125709,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 7954.879921087591,
+      "p50Nanoseconds" : 125709,
+      "p95Nanoseconds" : 131084,
+      "p99Nanoseconds" : 158959
+    },
+    {
+      "iterations" : 100,
+      "name" : "source-program-evaluation",
+      "normalizedP50Nanoseconds" : 1333,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 750187.5468867216,
+      "p50Nanoseconds" : 1333,
+      "p95Nanoseconds" : 1500,
+      "p99Nanoseconds" : 4000
+    },
+    {
+      "iterations" : 100,
+      "name" : "prepared-program-evaluation",
+      "normalizedP50Nanoseconds" : 667,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 1499250.3748125937,
+      "p50Nanoseconds" : 667,
+      "p95Nanoseconds" : 792,
+      "p99Nanoseconds" : 1000
+    },
+    {
+      "iterations" : 100,
+      "name" : "large-source-evaluation",
+      "normalizedP50Nanoseconds" : 23125,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 43243.24324324324,
+      "p50Nanoseconds" : 23125,
+      "p95Nanoseconds" : 24208,
+      "p99Nanoseconds" : 26375
+    },
+    {
+      "iterations" : 100,
+      "name" : "large-prepared-program",
+      "normalizedP50Nanoseconds" : 1834,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 545256.2704471102,
+      "p50Nanoseconds" : 1834,
+      "p95Nanoseconds" : 1916,
+      "p99Nanoseconds" : 2042
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-create-and-first-import",
+      "normalizedP50Nanoseconds" : 39542,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 25289.565525264275,
+      "p50Nanoseconds" : 39542,
+      "p95Nanoseconds" : 44916,
+      "p99Nanoseconds" : 55875
+    },
+    {
+      "iterations" : 100,
+      "name" : "source-create-and-first-import",
+      "normalizedP50Nanoseconds" : 38750,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 25806.451612903227,
+      "p50Nanoseconds" : 38750,
+      "p95Nanoseconds" : 43041,
+      "p99Nanoseconds" : 47375
+    },
+    {
+      "iterations" : 100,
+      "name" : "repeated-module-import",
+      "normalizedP50Nanoseconds" : 5041,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 198373.33862328902,
+      "p50Nanoseconds" : 5041,
+      "p95Nanoseconds" : 9041,
+      "p99Nanoseconds" : 14875
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-create-and-link",
+      "normalizedP50Nanoseconds" : 37750,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 26490.066225165563,
+      "p50Nanoseconds" : 37750,
+      "p95Nanoseconds" : 42959,
+      "p99Nanoseconds" : 47625
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-create-and-start-module",
+      "normalizedP50Nanoseconds" : 35542,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 28135.726745821845,
+      "p50Nanoseconds" : 35542,
+      "p95Nanoseconds" : 42083,
+      "p99Nanoseconds" : 47375
+    },
+    {
+      "iterations" : 100,
+      "name" : "javascript-to-swift-call",
+      "normalizedP50Nanoseconds" : 1250,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 800000,
+      "p50Nanoseconds" : 1250,
+      "p95Nanoseconds" : 1375,
+      "p99Nanoseconds" : 2667
+    },
+    {
+      "iterations" : 100,
+      "name" : "retained-javascript-function-call",
+      "normalizedP50Nanoseconds" : 1125,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 888888.8888888889,
+      "p50Nanoseconds" : 1125,
+      "p95Nanoseconds" : 1250,
+      "p99Nanoseconds" : 1875
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-concurrent-creation",
+      "normalizedP50Nanoseconds" : 18583.5,
+      "operationsPerIteration" : 4,
+      "operationsPerSecond" : 53811.17658137595,
+      "p50Nanoseconds" : 74334,
+      "p95Nanoseconds" : 92458,
+      "p99Nanoseconds" : 130334
+    },
+    {
+      "iterations" : 100,
+      "name" : "cold-provisioner-acquisition",
+      "normalizedP50Nanoseconds" : 52083,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 19200.122880786435,
+      "p50Nanoseconds" : 52083,
+      "p95Nanoseconds" : 58292,
+      "p99Nanoseconds" : 79916
+    },
+    {
+      "iterations" : 100,
+      "name" : "runtime-create-and-teardown",
+      "normalizedP50Nanoseconds" : 34708,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 28811.80131381814,
+      "p50Nanoseconds" : 34708,
+      "p95Nanoseconds" : 39916,
+      "p99Nanoseconds" : 49667
+    },
+    {
+      "iterations" : 100,
+      "name" : "ready-provisioner-acquisition",
+      "normalizedP50Nanoseconds" : 10667,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 93747.07040404987,
+      "p50Nanoseconds" : 10667,
+      "p95Nanoseconds" : 12250,
+      "p99Nanoseconds" : 18667
+    },
+    {
+      "iterations" : 100,
+      "name" : "template-runtime-with-mixed-swift-types",
+      "normalizedP50Nanoseconds" : 43958,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 22748.987670048682,
+      "p50Nanoseconds" : 43958,
+      "p95Nanoseconds" : 50917,
+      "p99Nanoseconds" : 58458
+    },
+    {
+      "iterations" : 100,
+      "name" : "swift-struct-canonicalization",
+      "normalizedP50Nanoseconds" : 2167,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 461467.4665436087,
+      "p50Nanoseconds" : 2167,
+      "p95Nanoseconds" : 2541,
+      "p99Nanoseconds" : 2917
+    },
+    {
+      "iterations" : 100,
+      "name" : "swift-enum-validation",
+      "normalizedP50Nanoseconds" : 1125,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 888888.8888888889,
+      "p50Nanoseconds" : 1125,
+      "p95Nanoseconds" : 1167,
+      "p99Nanoseconds" : 1334
+    },
+    {
+      "iterations" : 100,
+      "name" : "swift-host-construction-and-call",
+      "normalizedP50Nanoseconds" : 1959,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 510464.5227156713,
+      "p50Nanoseconds" : 1959,
+      "p95Nanoseconds" : 2166,
+      "p99Nanoseconds" : 2500
+    },
+    {
+      "iterations" : 100,
+      "name" : "mixed-value-host-call",
+      "normalizedP50Nanoseconds" : 3083,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 324359.3902043464,
+      "p50Nanoseconds" : 3083,
+      "p95Nanoseconds" : 3667,
+      "p99Nanoseconds" : 3875
+    },
+    {
+      "iterations" : 100,
+      "name" : "swift-host-identity-reuse",
+      "normalizedP50Nanoseconds" : 1000,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 1000000,
+      "p50Nanoseconds" : 1000,
+      "p95Nanoseconds" : 1125,
+      "p99Nanoseconds" : 2167
+    },
+    {
+      "iterations" : 100,
+      "name" : "host-allocation-garbage-collection-teardown",
+      "normalizedP50Nanoseconds" : 150375,
+      "operationsPerIteration" : 1,
+      "operationsPerSecond" : 6650.041562759768,
+      "p50Nanoseconds" : 150375,
+      "p95Nanoseconds" : 178708,
+      "p99Nanoseconds" : 324458
+    }
+  ],
+  "runs" : 5
+}

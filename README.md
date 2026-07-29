@@ -161,9 +161,8 @@ execution, 1,024 live host objects, and 256 pending async host calls.
 
 It is not an operating-system sandbox. QuickJS and exported Swift code execute
 inside the application process. Run hostile code in a separately sandboxed
-process and expose only minimal allowlisted capabilities. Read
-[SECURITY.md](SECURITY.md) and the DocC guide *Running Untrusted Code* before
-accepting untrusted scripts.
+process and expose only minimal allowlisted capabilities. Read the DocC guide
+*Running Untrusted Code* before accepting untrusted scripts.
 
 ## Documentation and examples
 
@@ -181,7 +180,9 @@ Standalone packages under [Examples](Examples) demonstrate:
 
 Public tests are also executable consumer examples and import only QuickJSKit.
 
-## Platform support
+## Compatibility
+
+QuickJSKit requires Swift 6.3 or later with strict concurrency enabled.
 
 | Platform | Minimum or target |
 | --- | --- |
@@ -205,9 +206,8 @@ Scripts/verify-vendored-quickjs.sh
 swift run -c release QuickJSKitBenchmarks --iterations 100
 ```
 
-See [AGENTS.md](AGENTS.md), [Architecture](Documentation/Architecture.md),
-[Contributing](CONTRIBUTING.md), [Migration notes](MIGRATION.md), and the
-[architectural decisions](Documentation/Decisions).
+See [AGENTS.md](AGENTS.md), [Architecture](Documentation/Architecture.md), and
+the [architectural decisions](Documentation/Decisions).
 
 QuickJS is copyright Fabrice Bellard and Charlie Gordon and is distributed
 under the MIT license in `Sources/CQuickJS/LICENSE`.

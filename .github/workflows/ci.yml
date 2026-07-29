@@ -31,7 +31,9 @@ jobs:
       - name: Run release tests with warnings as errors
         run: swift test -c release -Xswiftc -warnings-as-errors
       - name: Build standalone consumers
-        run: swift build --package-path Examples && swift build --package-path IntegrationTests/PlatformSmoke
+        run: >-
+          swift build --package-path Examples
+          && swift build --package-path IntegrationTests/PlatformSmoke
 
   portable-quality:
     name: Portable quality gates
@@ -55,8 +57,15 @@ jobs:
           CFLAGS: -Werror
         run: swift build -c release --target CQuickJS
       - name: Validate TypeScript and TSDoc
-        run: Scripts/validate-typescript.sh
+        working-directory: Tests/TypeScriptIntegration
+        run: |
+          npm ci --ignore-scripts
+          npm test
       - name: Validate public symbol graphs
         run: Scripts/check-symbol-graphs.sh
       - name: Check API compatibility
-        run: Scripts/check-api-compatibility.sh
+        shell: bash
+        run: |
+          baseline=$(tr -d '[:space:]' < .github/api-baseline)
+          test -n "$baseline"
+          swift package diagnose-api-breaking-changes "$baseline"

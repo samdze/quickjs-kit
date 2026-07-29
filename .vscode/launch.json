@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:quickjs-kit}",
+            "name": "Debug QuickJSKitBenchmarks",
+            "target": "QuickJSKitBenchmarks",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug QuickJSKitBenchmarks"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:quickjs-kit}",
+            "name": "Release QuickJSKitBenchmarks",
+            "target": "QuickJSKitBenchmarks",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release QuickJSKitBenchmarks"
+        }
+    ]
+}

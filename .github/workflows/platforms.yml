@@ -12,9 +12,9 @@ permissions:
 jobs:
   apple-devices:
     name: ${{ matrix.platform }}
-    runs-on: macos-15
+    runs-on: macos-26
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
     strategy:
       fail-fast: false
       matrix:
@@ -36,6 +36,7 @@ jobs:
           test -d "$DEVELOPER_DIR"
           xcodebuild -version
           xcrun swift --version
+          xcrun swift --version | grep -Eq 'Swift version 6\.3|Apple Swift version 6\.3'
           xcrun swift package dump-package >/dev/null
       - name: Build library product
         run: >-
@@ -63,6 +64,8 @@ jobs:
   android:
     name: Android AArch64 and x86-64 emulator
     runs-on: ubuntu-24.04
+    env:
+      SWIFT_SDKS_PATH: ${{ runner.temp }}/swift-sdks
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
@@ -71,13 +74,14 @@ jobs:
       - name: Install verified Swift Android SDK
         run: >-
           swift sdk install
+          --swift-sdks-path "$SWIFT_SDKS_PATH"
           https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz
           --checksum d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5
       - name: Install and configure Android NDK r27d
         shell: bash
         run: |
           set -euo pipefail
-          sdk_list="$(swift sdk list)"
+          sdk_list="$(swift sdk list --swift-sdks-path "$SWIFT_SDKS_PATH")"
           printf '%s\n' "$sdk_list"
           grep -Fq "swift-6.3.3-RELEASE_android" <<<"$sdk_list"
 
@@ -85,20 +89,19 @@ jobs:
           ndk_home="$ANDROID_HOME/ndk/27.3.13750724"
           printf 'ANDROID_NDK_HOME=%s\n' "$ndk_home" >> "$GITHUB_ENV"
 
-          sdk_root="$HOME/.swiftpm/swift-sdks"
-          if [[ ! -d "$sdk_root" ]]; then
-            echo "Swift SDK directory was not created: $sdk_root" >&2
+          if [[ ! -d "$SWIFT_SDKS_PATH" ]]; then
+            echo "Swift SDK directory was not created: $SWIFT_SDKS_PATH" >&2
             exit 1
           fi
           mapfile -t setup_scripts < <(
-            find "$sdk_root" \
+            find "$SWIFT_SDKS_PATH" \
               -type f \
               -path "*/swift-android/scripts/setup-android-sdk.sh" \
               -print
           )
           if [[ "${#setup_scripts[@]}" -ne 1 ]]; then
             echo "Expected exactly one Android SDK setup script, found ${#setup_scripts[@]}." >&2
-            find "$sdk_root" -maxdepth 4 -print >&2
+            find "$SWIFT_SDKS_PATH" -maxdepth 4 -print >&2
             exit 1
           fi
           ANDROID_NDK_HOME="$ndk_home" "${setup_scripts[0]}"
@@ -106,12 +109,14 @@ jobs:
         run: >-
           swift build
           --package-path IntegrationTests/PlatformSmoke
+          --swift-sdks-path "$SWIFT_SDKS_PATH"
           --swift-sdk aarch64-unknown-linux-android28
           --static-swift-stdlib
       - name: Build x86-64 consumer
         run: >-
           swift build
           --package-path IntegrationTests/PlatformSmoke
+          --swift-sdks-path "$SWIFT_SDKS_PATH"
           --swift-sdk x86_64-unknown-linux-android28
           --static-swift-stdlib
       - name: Run x86-64 consumer in Android emulator

@@ -13,6 +13,8 @@ jobs:
   apple-devices:
     name: ${{ matrix.platform }}
     runs-on: macos-15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     strategy:
       fail-fast: false
       matrix:
@@ -26,7 +28,15 @@ jobs:
           - platform: visionOS
             destination: generic/platform=visionOS
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Select and verify the Swift 6.3 Xcode toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcrun swift --version
+          xcrun swift package dump-package >/dev/null
       - name: Build library product
         run: >-
           xcodebuild build
@@ -54,8 +64,8 @@ jobs:
     name: Android AArch64 and x86-64 emulator
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
         with:
           swift-version: "6.3.3"
       - name: Install verified Swift Android SDK
@@ -64,10 +74,34 @@ jobs:
           https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz
           --checksum d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5
       - name: Install and configure Android NDK r27d
+        shell: bash
         run: |
+          set -euo pipefail
+          sdk_list="$(swift sdk list)"
+          printf '%s\n' "$sdk_list"
+          grep -Fq "swift-6.3.3-RELEASE_android" <<<"$sdk_list"
+
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.3.13750724"
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.3.13750724"
-          "$HOME/.swiftpm/swift-sdks/swift-6.3.3-RELEASE_android.artifactbundle/swift-android/scripts/setup-android-sdk.sh"
+          ndk_home="$ANDROID_HOME/ndk/27.3.13750724"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ndk_home" >> "$GITHUB_ENV"
+
+          sdk_root="$HOME/.swiftpm/swift-sdks"
+          if [[ ! -d "$sdk_root" ]]; then
+            echo "Swift SDK directory was not created: $sdk_root" >&2
+            exit 1
+          fi
+          mapfile -t setup_scripts < <(
+            find "$sdk_root" \
+              -type f \
+              -path "*/swift-android/scripts/setup-android-sdk.sh" \
+              -print
+          )
+          if [[ "${#setup_scripts[@]}" -ne 1 ]]; then
+            echo "Expected exactly one Android SDK setup script, found ${#setup_scripts[@]}." >&2
+            find "$sdk_root" -maxdepth 4 -print >&2
+            exit 1
+          fi
+          ANDROID_NDK_HOME="$ndk_home" "${setup_scripts[0]}"
       - name: Build AArch64 consumer
         run: >-
           swift build
@@ -88,5 +122,5 @@ jobs:
           profile: pixel_2
           script: |
             adb push IntegrationTests/PlatformSmoke/.build/x86_64-unknown-linux-android28/debug/QuickJSKitPlatformSmoke /data/local/tmp/
-            adb push "$ANDROID_HOME/ndk/27.3.13750724/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so" /data/local/tmp/
+            adb push "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so" /data/local/tmp/
             adb shell "cd /data/local/tmp && LD_LIBRARY_PATH=. ./QuickJSKitPlatformSmoke"

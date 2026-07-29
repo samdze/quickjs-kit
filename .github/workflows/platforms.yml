@@ -26,7 +26,7 @@ jobs:
           - platform: visionOS
             destination: generic/platform=visionOS
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Build library product
         run: >-
           xcodebuild build
@@ -54,7 +54,7 @@ jobs:
     name: Android AArch64 and x86-64 emulator
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
         with:
           swift-version: "6.3.3"

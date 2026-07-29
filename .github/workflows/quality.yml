@@ -1,9 +1,6 @@
 name: Deep Quality
 
 on:
-  pull_request:
-  push:
-    branches: [main]
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -82,15 +79,3 @@ jobs:
             swift test --filter RegistryLifetime
             swift test --filter MacroExpansion
           done
-
-  fuzz:
-    name: Coverage-guided fuzzing
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: swift-actions/setup-swift@7ca6abe6b3b0e8b5421b88be48feee39cbf52c6a
-        with:
-          swift-version: "6.3.3"
-      - name: Run fuzz campaign under AddressSanitizer
-        run: Scripts/run-fuzzing.sh 300

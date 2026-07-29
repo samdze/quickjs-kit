@@ -71,12 +71,12 @@ struct QuickJSKitBenchmarks {
         let unit: String
     }
 
-    private struct JSONReport: Encodable {
+    private struct JSONReport: Codable {
         let measurements: [JSONMeasurement]
         let metrics: [JSONMetric]
     }
 
-    private struct JSONMeasurement: Encodable {
+    private struct JSONMeasurement: Codable {
         let name: String
         let iterations: Int
         let operationsPerIteration: Int
@@ -87,14 +87,24 @@ struct QuickJSKitBenchmarks {
         let operationsPerSecond: Double
     }
 
-    private struct JSONMetric: Encodable {
+    private struct JSONMetric: Codable {
         let name: String
         let value: UInt64
         let unit: String
     }
 
+    private struct BenchmarkSummary: Encodable {
+        let label: String
+        let runs: Int
+        let measurements: [JSONMeasurement]
+    }
+
     static func main() async throws {
         let arguments = CommandLine.arguments
+        if arguments.dropFirst().first == "summarize" {
+            try summarize(Array(arguments.dropFirst(2)))
+            return
+        }
         let iterations = try parseIterations(arguments)
         let usesJSON = arguments.contains("--json")
         let jsonOutput = try parseOption("--json-output", in: arguments)
@@ -695,6 +705,114 @@ struct QuickJSKitBenchmarks {
         return arguments[valueIndex]
     }
 
+    private static func summarize(_ arguments: [String]) throws {
+        let label = try requiredOption("--label", in: arguments)
+        let jsonOutput = try requiredOption("--json-output", in: arguments)
+        let markdownOutput = try requiredOption("--markdown-output", in: arguments)
+        let optionNames: Set<String> = [
+            "--label",
+            "--json-output",
+            "--markdown-output",
+        ]
+        var reportPaths: [String] = []
+        var skipNext = false
+        for argument in arguments {
+            if skipNext {
+                skipNext = false
+            } else if optionNames.contains(argument) {
+                skipNext = true
+            } else {
+                reportPaths.append(argument)
+            }
+        }
+        guard !reportPaths.isEmpty else {
+            throw BenchmarkError.noReportsToSummarize
+        }
+
+        let reports = try reportPaths.map {
+            try JSONDecoder().decode(
+                JSONReport.self,
+                from: Data(contentsOf: URL(fileURLWithPath: $0))
+            )
+        }
+        guard let firstReport = reports.first else {
+            throw BenchmarkError.noReportsToSummarize
+        }
+        let measurements = try firstReport.measurements.map { measurement in
+            let samples = try reports.map { report in
+                guard let matchingMeasurement = report.measurements.first(
+                    where: { $0.name == measurement.name }
+                ) else {
+                    throw BenchmarkError.inconsistentMeasurement(measurement.name)
+                }
+                return matchingMeasurement
+            }
+            return JSONMeasurement(
+                name: measurement.name,
+                iterations: measurement.iterations,
+                operationsPerIteration: measurement.operationsPerIteration,
+                p50Nanoseconds: median(samples.map(\.p50Nanoseconds)),
+                p95Nanoseconds: median(samples.map(\.p95Nanoseconds)),
+                p99Nanoseconds: median(samples.map(\.p99Nanoseconds)),
+                normalizedP50Nanoseconds: median(
+                    samples.map(\.normalizedP50Nanoseconds)
+                ),
+                operationsPerSecond: median(samples.map(\.operationsPerSecond))
+            )
+        }
+        let summary = BenchmarkSummary(
+            label: label,
+            runs: reports.count,
+            measurements: measurements
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(summary).write(
+            to: URL(fileURLWithPath: jsonOutput),
+            options: .atomic
+        )
+
+        var markdown = """
+            # \(label)
+
+            Runs: \(reports.count)
+
+            | Measurement | Median p50 | Median p95 | Median p99 | Throughput |
+            | --- | ---: | ---: | ---: | ---: |
+
+            """
+        for measurement in measurements {
+            markdown += "| \(measurement.name) "
+            markdown += "| \(Int(measurement.p50Nanoseconds)) ns "
+            markdown += "| \(Int(measurement.p95Nanoseconds)) ns "
+            markdown += "| \(Int(measurement.p99Nanoseconds)) ns "
+            markdown += "| \(Int(measurement.operationsPerSecond)) ops/s |\n"
+        }
+        try Data(markdown.utf8).write(
+            to: URL(fileURLWithPath: markdownOutput),
+            options: .atomic
+        )
+    }
+
+    private static func requiredOption(
+        _ name: String,
+        in arguments: [String]
+    ) throws -> String {
+        guard let value = try parseOption(name, in: arguments) else {
+            throw BenchmarkError.missingOptionValue(name)
+        }
+        return value
+    }
+
+    private static func median(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[middle - 1] + sorted[middle]) / 2
+        }
+        return sorted[middle]
+    }
+
     private static func printHuman(
         measurements: [Measurement],
         metrics: [ScalarMetric],
@@ -763,6 +881,8 @@ struct QuickJSKitBenchmarks {
         case invalidJSONOutput
         case expectedRejection
         case missingOptionValue(String)
+        case noReportsToSummarize
+        case inconsistentMeasurement(String)
         case consumerFailed(Int32)
     }
 }

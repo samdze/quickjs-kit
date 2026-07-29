@@ -6,5 +6,4 @@ DerivedData/
 xcuserdata/
 node_modules/
 Examples/Package.resolved
-Fuzzing/Package.resolved
 IntegrationTests/PlatformSmoke/Package.resolved

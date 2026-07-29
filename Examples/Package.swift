@@ -12,23 +12,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "TypedEvaluation",
-            dependencies: [.product(name: "QuickJSKit", package: "quickjs-kit")]
-        ),
-        .executableTarget(
-            name: "AsyncHostAPI",
-            dependencies: [.product(name: "QuickJSKit", package: "quickjs-kit")]
-        ),
-        .executableTarget(
-            name: "ModuleEmbedding",
-            dependencies: [.product(name: "QuickJSKit", package: "quickjs-kit")]
-        ),
-        .executableTarget(
-            name: "RuntimeTemplates",
-            dependencies: [.product(name: "QuickJSKit", package: "quickjs-kit")]
-        ),
-        .executableTarget(
-            name: "TypeScriptWorkspace",
+            name: "QuickJSKitExamples",
             dependencies: [
                 .product(name: "QuickJSKit", package: "quickjs-kit"),
                 .product(name: "QuickJSKitMacros", package: "quickjs-kit"),

@@ -1,22 +1,22 @@
 # QuickJSKit Examples
 
-This standalone Swift package demonstrates complete consumer workflows without
-`@testable` imports or C access.
+This standalone Swift package demonstrates complete consumer workflows.
 
 ```sh
-swift run --package-path Examples TypedEvaluation
-swift run --package-path Examples AsyncHostAPI
-swift run --package-path Examples ModuleEmbedding
-swift run --package-path Examples RuntimeTemplates
-swift run --package-path Examples TypeScriptWorkspace
+swift run --package-path Examples QuickJSKitExamples
+swift run --package-path Examples QuickJSKitExamples evaluation
+swift run --package-path Examples QuickJSKitExamples binding
+swift run --package-path Examples QuickJSKitExamples module
+swift run --package-path Examples QuickJSKitExamples template
+swift run --package-path Examples QuickJSKitExamples tooling
 ```
 
-- `TypedEvaluation` decodes JavaScript directly into a Codable model.
-- `AsyncHostAPI` exposes an actor through a typed async Swift binding.
-- `ModuleEmbedding` combines a Swift-defined module and an ES source module.
-- `RuntimeTemplates` creates and prewarms independently isolated runtimes.
-- `TypeScriptWorkspace` derives schemas with `@JavaScriptExport` and writes a
-  managed editor workspace.
+- `evaluation` decodes JavaScript directly into a Codable model.
+- `binding` exposes an actor through a typed async Swift binding.
+- `module` combines a Swift-defined module and an ES source module.
+- `template` creates and prewarms independently isolated runtimes.
+- `tooling` derives schemas with `@JavaScriptExport` and writes a managed editor
+  workspace.
 
 The separate `IntegrationTests/PlatformSmoke` package combines the portable
 features used by the release-blocking platform matrix.

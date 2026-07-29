@@ -283,6 +283,11 @@ Test observable behavior and architectural invariants at the lowest useful
 level. New behavior includes success, failure, boundary, teardown, and
 concurrency coverage.
 
+Repository-only tools are classified in
+`Documentation/Repository-Surface-Audit.md`. Do not extend an item marked as a
+removal candidate without first demonstrating a unique invariant that cannot
+be expressed by the retained package tests or tooling.
+
 The long-term suite includes:
 
 - evaluation and diagnostic source names;
@@ -432,9 +437,9 @@ happy path.
   resource observability.
 - Expanded conversion, Promise, access, provisioning, and standalone startup
   benchmarks.
-- Compatibility and security policy, complete DocC, and portable examples.
-- Reproducible vendored-source verification, dependency locks, SBOM, API
-  compatibility, fuzzing, sanitizer, and stress gates.
+- Concise README compatibility guidance, complete DocC, and portable examples.
+- Reproducible vendored-source verification, dependency locks, API
+  compatibility, sanitizer, and stress gates.
 - Blocking qualification for Apple platforms, Linux, Windows, and Android plus
   non-mutating release-readiness automation.
 

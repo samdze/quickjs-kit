@@ -7,6 +7,8 @@ Versioning.
 
 ## Unreleased
 
+## [1.0.0-beta.1] - 2026-07-29
+
 ### Added
 
 - A modern actor-isolated QuickJS runtime with direct Codable conversion.
@@ -24,6 +26,10 @@ Versioning.
 
 - Runtime resource reporting is exposed as `JavaScriptResourceUsage` through
   `resourceUsage()`, replacing the former memory-only terminology.
+- Repository validation now uses two focused scripts, one benchmark executable,
+  one standalone examples executable, and reusable publication workflows.
+- Removed the repository-owned fuzzing harness and generated benchmark reports
+  that did not participate in a package contract.
 
 ### Security
 

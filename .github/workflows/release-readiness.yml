@@ -58,7 +58,7 @@ jobs:
               --json-output ".build/readiness/benchmarks-$run.json" \
               --consumer-executable "$consumer_directory/QuickJSKitPlatformSmoke"
           done
-          swift Scripts/summarize-benchmarks.swift \
+          swift run -c release QuickJSKitBenchmarks summarize \
             --label "QuickJSKit release candidate" \
             --json-output .build/readiness/benchmarks-summary.json \
             --markdown-output .build/readiness/benchmarks-summary.md \
@@ -67,9 +67,8 @@ jobs:
             .build/readiness/benchmarks-3.json \
             .build/readiness/benchmarks-4.json \
             .build/readiness/benchmarks-5.json
-      - name: Generate SPDX SBOM and licenses
+      - name: Collect license and vendored-source records
         run: |
-          Scripts/generate-sbom.sh .build/readiness/quickjskit.spdx
           mkdir -p .build/readiness/licenses
           cp LICENSE .build/readiness/licenses/QuickJSKit-LICENSE
           cp Sources/CQuickJS/LICENSE .build/readiness/licenses/QuickJS-LICENSE

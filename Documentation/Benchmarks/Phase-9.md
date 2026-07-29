@@ -12,10 +12,11 @@ in release mode. Each report is the median of five independent runs.
 - Clock: Swift `ContinuousClock`
 - Host: macOS 26.5, arm64
 
-The complete machine-readable results are stored in
-`Phase-9-Before.json` and `Phase-9-After.json`. Timing remains diagnostic rather
-than a unit-test assertion because sub-microsecond measurements are sensitive
-to scheduling, temperature, and code layout.
+The report records the relevant baseline and result summary. The generated raw
+JSON reports were intentionally not retained because no automated historical
+comparison consumes them. Timing remains diagnostic rather than a unit-test
+assertion because sub-microsecond measurements are sensitive to scheduling,
+temperature, and code layout.
 
 ## Representative results
 
@@ -64,25 +65,3 @@ change.
 The configured runtime profile adds no measurable evaluation overhead. Pending
 asynchronous-call accounting is paid only when an asynchronous host operation
 is admitted or rejected.
-
-## Raw report integrity
-
-Baseline run SHA-256 values:
-
-```text
-6dc3dd5c5ef6026d5fddc6bab89f9b7d8de965cd2a8646f58c75480ae22935e0
-d0bb9aa7ed09060185c2b5032397353c7f9c6a2d38b27d21a69d66b0eca38a47
-603478e5ea4cb944c67b821482f8bc0f55c7d2410c793aaf320602e0a1f1abec
-c9c8c601fb48985a82745a87c2ba5c0687a920f8f255747c98b6c74b7c22f6c4
-1ff38b80fde90d8a088e8689277ebddd52b4ddb01aeaf2eed54d8dc148058c0e
-```
-
-Final run SHA-256 values:
-
-```text
-061d13f8288793bc811c19d41e607f54420549294bc8d7a804354e2e3a593d1b
-96727c0758b5329aef0801b6de92ad11cd23488e42b6e22aa6457bf543f24e3d
-bbec446581066abf548414b9b1e8abea56a5a843755698dfe7b472d5489ecb39
-944f2d0b7ae5c54164cbb4a75ec8043d5539cd87d10b80efb55c0efba72e6438
-420d86f08c0c9da89661a11edaaaa3d30a16e9d662d5188ebc7555bbfe3e003b
-```

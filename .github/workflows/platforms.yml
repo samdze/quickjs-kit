@@ -64,13 +64,14 @@ jobs:
   android:
     name: Android AArch64 and x86-64 emulator
     runs-on: ubuntu-24.04
-    env:
-      SWIFT_SDKS_PATH: ${{ runner.temp }}/swift-sdks
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
         with:
           swift-version: "6.3.3"
+      - name: Select the Swift SDK directory
+        shell: bash
+        run: printf 'SWIFT_SDKS_PATH=%s\n' "$RUNNER_TEMP/swift-sdks" >> "$GITHUB_ENV"
       - name: Install verified Swift Android SDK
         run: >-
           swift sdk install

@@ -360,7 +360,7 @@ private final class JavaScriptValueDecoderImplementation: Decoder {
                 expected: "an object with own enumerable properties"
             )
         }
-        let names = try engine.ownEnumerablePropertyNames(of: value.raw)
+        let names = try engine.ownEnumerablePropertyNames(ofRawValue: value.raw)
         return KeyedDecodingContainer(
             JavaScriptKeyedDecodingContainer(
                 decoder: self,

@@ -61,31 +61,31 @@ extension QuickJSEngine {
 
     internal func ownEnumerablePropertyNames(of identifier: UInt64) throws -> [String] {
         return try withRawValue(for: identifier) { object in
-            try ownEnumerablePropertyNames(of: object)
+            try ownEnumerablePropertyNames(ofRawValue: object)
         }
     }
 
-    internal func ownEnumerablePropertyNames(of object: JSValue) throws -> [String] {
-            var table: UnsafeMutablePointer<JSPropertyEnum>?
-            var count: UInt32 = 0
-            let flags = Int32(JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY)
-            guard JS_GetOwnPropertyNames(context, &table, &count, object, flags) >= 0 else {
+    internal func ownEnumerablePropertyNames(ofRawValue object: JSValue) throws -> [String] {
+        var table: UnsafeMutablePointer<JSPropertyEnum>?
+        var count: UInt32 = 0
+        let flags = Int32(JS_GPN_STRING_MASK | JS_GPN_ENUM_ONLY)
+        guard JS_GetOwnPropertyNames(context, &table, &count, object, flags) >= 0 else {
+            throw extractException()
+        }
+        guard let table else { return [] }
+        defer { JS_FreePropertyEnum(context, table, count) }
+
+        var names: [String] = []
+        names.reserveCapacity(Int(count))
+        for index in 0..<Int(count) {
+            let atom = table[index].atom
+            guard let pointer = JS_AtomToCString(context, atom) else {
                 throw extractException()
             }
-            guard let table else { return [] }
-            defer { JS_FreePropertyEnum(context, table, count) }
-
-            var names: [String] = []
-            names.reserveCapacity(Int(count))
-            for index in 0..<Int(count) {
-                let atom = table[index].atom
-                guard let pointer = JS_AtomToCString(context, atom) else {
-                    throw extractException()
-                }
-                defer { JS_FreeCString(context, pointer) }
-                names.append(String(cString: pointer))
-            }
-            return names
+            defer { JS_FreeCString(context, pointer) }
+            names.append(String(cString: pointer))
+        }
+        return names
     }
 
     internal func arrayLength(_ identifier: UInt64) throws -> Int {

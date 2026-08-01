@@ -123,10 +123,17 @@ jobs:
       - name: Run x86-64 consumer in Android emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
         with:
-          api-level: 35
+          # The AOSP automated test image starts much faster and avoids the
+          # flaky post-boot UI services of a full phone image on hosted runners.
+          api-level: 34
+          target: aosp_atd
           arch: x86_64
-          profile: pixel_2
+          cores: 4
+          ram-size: 4096M
+          emulator-boot-timeout: 300
+          disable-animations: false
           script: |
+            set -euo pipefail
             adb push IntegrationTests/PlatformSmoke/.build/x86_64-unknown-linux-android28/debug/QuickJSKitPlatformSmoke /data/local/tmp/
             adb push "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so" /data/local/tmp/
             adb shell "cd /data/local/tmp && LD_LIBRARY_PATH=. ./QuickJSKitPlatformSmoke"

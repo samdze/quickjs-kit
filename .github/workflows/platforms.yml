@@ -86,7 +86,15 @@ jobs:
           printf '%s\n' "$sdk_list"
           grep -Fq "swift-6.3.3-RELEASE_android" <<<"$sdk_list"
 
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.3.13750724"
+          android_sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          set +o pipefail
+          yes | "$android_sdkmanager" --licenses >/dev/null
+          set -o pipefail
+          "$android_sdkmanager" \
+            "ndk;27.3.13750724" \
+            "platform-tools" \
+            "emulator" \
+            "system-images;android-35;default;x86_64"
           ndk_home="$ANDROID_HOME/ndk/27.3.13750724"
           printf 'ANDROID_NDK_HOME=%s\n' "$ndk_home" >> "$GITHUB_ENV"
 
@@ -131,24 +139,71 @@ jobs:
           --swift-sdk x86_64-unknown-linux-android28
           --static-swift-stdlib
       - name: Run x86-64 consumer in Android emulator
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
-        with:
-          # The AOSP automated test image starts much faster and avoids the
-          # flaky post-boot UI services of a full phone image on hosted runners.
-          api-level: 34
-          target: aosp_atd
-          arch: x86_64
-          cores: 4
-          ram-size: 4096M
-          disk-size: 2048M
-          emulator-boot-timeout: 300
-          emulator-options: >-
-            -no-window -gpu swiftshader_indirect -no-snapshot -noaudio
-            -no-boot-anim -no-metrics
-          disable-animations: false
-          disable-linux-hw-accel: false
-          script: |
-            set -euo pipefail
-            adb push IntegrationTests/PlatformSmoke/.build/x86_64-unknown-linux-android28/debug/QuickJSKitPlatformSmoke /data/local/tmp/
-            adb push "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so" /data/local/tmp/
-            adb shell "cd /data/local/tmp && LD_LIBRARY_PATH=. ./QuickJSKitPlatformSmoke"
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/quickjskit-avd"
+
+          emulator="$ANDROID_HOME/emulator/emulator"
+          adb="$ANDROID_HOME/platform-tools/adb"
+          avdmanager="$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager"
+          avd_name="quickjskit-smoke"
+          emulator_log="$RUNNER_TEMP/quickjskit-emulator.log"
+          emulator_pid=""
+
+          cleanup() {
+            local status=$?
+
+            if [[ -n "$emulator_pid" ]] && kill -0 "$emulator_pid" 2>/dev/null; then
+              "$adb" -s emulator-5554 emu kill >/dev/null 2>&1 || true
+              wait "$emulator_pid" || true
+            fi
+
+            if (( status != 0 )); then
+              set +e
+              echo "Android emulator diagnostics:" >&2
+              "$adb" devices -l >&2
+              df -h "$RUNNER_TEMP" "$ANDROID_HOME" "$ANDROID_AVD_HOME" >&2
+              cat "$ANDROID_AVD_HOME/$avd_name.avd/config.ini" >&2
+              tail -n 200 "$emulator_log" >&2
+            fi
+
+            return "$status"
+          }
+          trap cleanup EXIT
+
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf 'no\n' | "$avdmanager" create avd --force \
+            --name "$avd_name" \
+            --package "system-images;android-35;default;x86_64"
+          "$emulator" -accel-check
+
+          "$emulator" -avd "$avd_name" \
+            -no-window \
+            -no-snapshot \
+            -noaudio \
+            -no-boot-anim \
+            -no-metrics \
+            -gpu swiftshader_indirect \
+            -accel on >"$emulator_log" 2>&1 &
+          emulator_pid=$!
+
+          deadline=$((SECONDS + 300))
+          until [[ "$("$adb" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "The Android emulator exited before completing boot." >&2
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "Timed out waiting for the Android emulator to boot." >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
+          smoke_binary="IntegrationTests/PlatformSmoke/.build/x86_64-unknown-linux-android28/debug/QuickJSKitPlatformSmoke"
+          shared_library="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so"
+          "$adb" -s emulator-5554 push "$smoke_binary" /data/local/tmp/
+          "$adb" -s emulator-5554 push "$shared_library" /data/local/tmp/
+          "$adb" -s emulator-5554 shell \
+            "cd /data/local/tmp && LD_LIBRARY_PATH=. ./QuickJSKitPlatformSmoke"

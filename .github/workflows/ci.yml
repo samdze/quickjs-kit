@@ -41,8 +41,8 @@ jobs:
           swift build --package-path Examples
           && swift build --package-path IntegrationTests/PlatformSmoke
 
-  portable-quality:
-    name: Portable quality gates
+  release-quality:
+    name: Release quality gates
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

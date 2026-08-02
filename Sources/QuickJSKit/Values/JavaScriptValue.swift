@@ -14,7 +14,11 @@ public struct JavaScriptValue: Sendable, Equatable, Hashable, CustomStringConver
         case reference(JavaScriptReference)
     }
 
-    internal static let maximumSafeInteger = 9_007_199_254_740_991
+    /// JavaScript's largest exactly representable integer as a `Number`.
+    ///
+    /// This deliberately uses `Int64` rather than platform-width `Int` so the
+    /// value is available on 32-bit Swift targets such as watchOS.
+    internal static let maximumSafeInteger: Int64 = 9_007_199_254_740_991
     internal let storage: Storage
 
     internal init(storage: Storage) {
@@ -51,10 +55,11 @@ public struct JavaScriptValue: Sendable, Equatable, Hashable, CustomStringConver
     /// Values in JavaScript's safe integer range become `number`; larger
     /// magnitudes become `bigint`.
     public init(_ value: Int) {
-        if value >= -Self.maximumSafeInteger && value <= Self.maximumSafeInteger {
-            self.init(Double(value))
+        let integer = Int64(value)
+        if integer >= -Self.maximumSafeInteger && integer <= Self.maximumSafeInteger {
+            self.init(Double(integer))
         } else {
-            self.init(JavaScriptBigInt(Int64(value)))
+            self.init(JavaScriptBigInt(integer))
         }
     }
 
@@ -63,10 +68,11 @@ public struct JavaScriptValue: Sendable, Equatable, Hashable, CustomStringConver
     /// Values in JavaScript's safe integer range become `number`; larger values
     /// become `bigint`.
     public init(_ value: UInt) {
-        if value <= Self.maximumSafeInteger {
-            self.init(Double(value))
+        let integer = UInt64(value)
+        if integer <= UInt64(Self.maximumSafeInteger) {
+            self.init(Double(integer))
         } else {
-            self.init(JavaScriptBigInt(UInt64(value)))
+            self.init(JavaScriptBigInt(integer))
         }
     }
 

@@ -66,7 +66,7 @@ extension QuickJSEngine {
     }
 
     fileprivate func newSignedInteger(_ value: Int64) -> ManagedQuickJSValue {
-        let limit = Int64(JavaScriptValue.maximumSafeInteger)
+        let limit = JavaScriptValue.maximumSafeInteger
         if value >= -limit && value <= limit {
             return ManagedQuickJSValue(JS_NewFloat64(context, Double(value)), in: context)
         }

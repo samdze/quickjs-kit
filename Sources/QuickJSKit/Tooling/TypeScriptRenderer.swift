@@ -643,7 +643,7 @@ internal func renderTypeScriptLiteral(_ literal: TypeScriptLiteral) -> String {
     switch literal {
     case let .string(value): return quotedJSONString(value)
     case let .integer(value):
-        let limit = Int64(JavaScriptValue.maximumSafeInteger)
+        let limit = JavaScriptValue.maximumSafeInteger
         return value < -limit || value > limit
             ? "\(value)n"
             : String(value)

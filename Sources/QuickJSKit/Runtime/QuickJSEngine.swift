@@ -15,6 +15,12 @@ internal enum EngineJavaScriptValue {
     case reference(RegisteredJavaScriptReference)
 }
 
+internal enum QuickJSPromiseState {
+    case pending
+    case fulfilled
+    case rejected
+}
+
 internal struct EngineModuleSource {
     internal let source: String
     internal let sourceURL: String
@@ -530,7 +536,7 @@ internal final class QuickJSEngine {
             context: context,
             objectAddress: address,
             kind: kind,
-            isPromise: promiseStateRaw(raw) != nil
+            isPromise: promiseState(of: raw) != nil
         )
         references[identifier] = stored
         identifiersByObjectAddress[address] = identifier
@@ -555,9 +561,17 @@ internal final class QuickJSEngine {
         return result
     }
 
-    private func promiseStateRaw(_ raw: JSValue) -> UInt32? {
-        let state = JS_PromiseState(context, raw).rawValue
-        return state <= 2 ? state : nil
+    internal func promiseState(of raw: JSValue) -> QuickJSPromiseState? {
+        switch Int64(JS_PromiseState(context, raw).rawValue) {
+        case 0:
+            return .pending
+        case 1:
+            return .fulfilled
+        case 2:
+            return .rejected
+        default:
+            return nil
+        }
     }
 }
 

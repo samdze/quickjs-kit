@@ -456,9 +456,8 @@ extension QuickJSEngine {
         observedPromiseAddresses.removeAll()
     }
 
-    internal func promiseState(of value: ManagedQuickJSValue) -> UInt32? {
-        let state = JS_PromiseState(context, value.raw).rawValue
-        return state <= 2 ? state : nil
+    internal func promiseState(of value: ManagedQuickJSValue) -> QuickJSPromiseState? {
+        promiseState(of: value.raw)
     }
 
     internal func promiseResult(of promise: ManagedQuickJSValue) -> ManagedQuickJSValue {

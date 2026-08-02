@@ -64,34 +64,33 @@ extension JavaScriptRuntime {
                                 continuation.resume(returning: result)
                                 return
                             }
-                            if state == 1 {
+                            switch state {
+                            case .fulfilled:
                                 let result = try transform(engine.promiseResult(of: raw))
                                 engine.unmarkPromiseObserved(raw)
                                 continuation.resume(returning: result)
                                 return
-                            }
-                            if state == 2 {
+                            case .rejected:
                                 let error = engine.errorFromRejectedPromise(raw)
                                     .withSourceURL(sourceURL)
                                 engine.unmarkPromiseObserved(raw)
                                 continuation.resume(throwing: error)
                                 return
+                            case .pending:
+                                break
                             }
 
                             let waiter = HostPromiseWaiter(
                                 promise: raw,
                                 poll: { engine, promise in
-                                    guard let state = engine.promiseState(of: promise),
-                                          state != 0 else {
+                                    guard let state = engine.promiseState(of: promise) else {
                                         return false
                                     }
-                                    defer { engine.unmarkPromiseObserved(promise) }
-                                    if state == 2 {
-                                        continuation.resume(
-                                            throwing: engine.errorFromRejectedPromise(promise)
-                                                .withSourceURL(sourceURL)
-                                        )
-                                    } else {
+                                    switch state {
+                                    case .pending:
+                                        return false
+                                    case .fulfilled:
+                                        defer { engine.unmarkPromiseObserved(promise) }
                                         do {
                                             continuation.resume(
                                                 returning: try transform(
@@ -101,8 +100,15 @@ extension JavaScriptRuntime {
                                         } catch {
                                             continuation.resume(throwing: error)
                                         }
+                                        return true
+                                    case .rejected:
+                                        defer { engine.unmarkPromiseObserved(promise) }
+                                        continuation.resume(
+                                            throwing: engine.errorFromRejectedPromise(promise)
+                                                .withSourceURL(sourceURL)
+                                        )
+                                        return true
                                     }
-                                    return true
                                 },
                                 cancel: { engine in
                                     engine.unmarkPromiseObserved(raw)
@@ -145,17 +151,18 @@ extension JavaScriptRuntime {
             guard let state = engine.promiseState(of: raw) else {
                 return try transform(raw)
             }
-            if state == 1 {
+            switch state {
+            case .fulfilled:
                 return try transform(engine.promiseResult(of: raw))
-            }
-            if state == 2 {
+            case .rejected:
                 throw engine.errorFromRejectedPromise(raw).withSourceURL(sourceURL)
+            case .pending:
+                throw JavaScriptError(
+                    kind: .wouldSuspend,
+                    message: "The JavaScript result requires asynchronous progress.",
+                    sourceURL: sourceURL
+                )
             }
-            throw JavaScriptError(
-                kind: .wouldSuspend,
-                message: "The JavaScript result requires asynchronous progress.",
-                sourceURL: sourceURL
-            )
         }
     }
 

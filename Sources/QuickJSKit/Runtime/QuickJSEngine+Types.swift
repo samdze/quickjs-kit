@@ -1,20 +1,29 @@
 internal import CQuickJS
 
-private let quickJSKitTypeFunctionClassID: JSClassID = {
-    var identifier = JSClassID()
-    JS_NewClassID(&identifier)
-    return identifier
-}()
+private struct QuickJSKitClassIDs {
+    let typeFunction: JSClassID
+    let hostObject: JSClassID
+
+    init() {
+        var typeFunction = JSClassID()
+        JS_NewClassID(&typeFunction)
+
+        var hostObject = JSClassID()
+        JS_NewClassID(&hostObject)
+
+        self.typeFunction = typeFunction
+        self.hostObject = hostObject
+    }
+}
+
+// QuickJS allocates class identifiers from process-global state. Keep both
+// QuickJSKit allocations in one Swift lazy initializer so Windows does not
+// require QuickJS's POSIX-thread-backed Atomics configuration for this setup.
+private let quickJSKitClassIDs = QuickJSKitClassIDs()
 
 private struct QuickJSKitTypeFunctionPayload {
     let identifier: Int32
 }
-
-private let quickJSKitHostObjectClassID: JSClassID = {
-    var identifier = JSClassID()
-    JS_NewClassID(&identifier)
-    return identifier
-}()
 
 private struct QuickJSKitHostObjectPayload {
     let rootIdentifier: UInt64
@@ -65,7 +74,7 @@ extension QuickJSEngine {
         from value: JSValue,
         expectedTypeIdentifier: Int32
     ) throws -> UInt64 {
-        guard let opaque = JS_GetOpaque(value, quickJSKitHostObjectClassID) else {
+        guard let opaque = JS_GetOpaque(value, quickJSKitClassIDs.hostObject) else {
             throw JavaScriptError(
                 kind: .conversion,
                 message: "The value is not a registered Swift host object."
@@ -84,7 +93,7 @@ extension QuickJSEngine {
     }
 
     private func ensureTypeFunctionClassIsRegistered() throws {
-        guard JS_IsRegisteredClass(runtime, quickJSKitTypeFunctionClassID) == 0 else {
+        guard JS_IsRegisteredClass(runtime, quickJSKitClassIDs.typeFunction) == 0 else {
             return
         }
         var definition = JSClassDef()
@@ -92,7 +101,7 @@ extension QuickJSEngine {
         definition.call = quickJSKitTypeFunctionCall
         let status = "QuickJSKit.Type".withCString { name in
             definition.class_name = name
-            return JS_NewClass(runtime, quickJSKitTypeFunctionClassID, &definition)
+            return JS_NewClass(runtime, quickJSKitClassIDs.typeFunction, &definition)
         }
         guard status >= 0 else {
             throw JavaScriptError(
@@ -103,14 +112,14 @@ extension QuickJSEngine {
     }
 
     private func ensureHostObjectClassIsRegistered() throws {
-        guard JS_IsRegisteredClass(runtime, quickJSKitHostObjectClassID) == 0 else {
+        guard JS_IsRegisteredClass(runtime, quickJSKitClassIDs.hostObject) == 0 else {
             return
         }
         var hostDefinition = JSClassDef()
         hostDefinition.finalizer = quickJSKitHostObjectFinalizer
         let hostStatus = "QuickJSKit.HostObject".withCString { name in
             hostDefinition.class_name = name
-            return JS_NewClass(runtime, quickJSKitHostObjectClassID, &hostDefinition)
+            return JS_NewClass(runtime, quickJSKitClassIDs.hostObject, &hostDefinition)
         }
         guard hostStatus >= 0 else {
             throw JavaScriptError(
@@ -143,7 +152,7 @@ extension QuickJSEngine {
 
         let rawFunction = JS_NewObjectClass(
             context,
-            Int32(bitPattern: quickJSKitTypeFunctionClassID)
+            Int32(bitPattern: quickJSKitClassIDs.typeFunction)
         )
         let function = ManagedQuickJSValue(rawFunction, in: context)
         guard JS_IsException(function.raw) == 0 else { throw extractException() }
@@ -268,7 +277,7 @@ extension QuickJSEngine {
         }
         let rawFunction = JS_NewObjectClass(
             context,
-            Int32(bitPattern: quickJSKitTypeFunctionClassID)
+            Int32(bitPattern: quickJSKitClassIDs.typeFunction)
         )
         let function = ManagedQuickJSValue(rawFunction, in: context)
         guard JS_IsException(rawFunction) == 0 else { throw extractException() }
@@ -742,7 +751,7 @@ extension QuickJSEngine {
         }
         let raw = JS_NewObjectClass(
             context,
-            Int32(bitPattern: quickJSKitHostObjectClassID)
+            Int32(bitPattern: quickJSKitClassIDs.hostObject)
         )
         let object = ManagedQuickJSValue(raw, in: context)
         guard JS_IsException(raw) == 0 else { throw extractException() }
@@ -823,7 +832,7 @@ private let quickJSKitTypeFunctionFinalizer: @convention(c) (
     OpaquePointer?,
     JSValue
 ) -> Void = { _, value in
-    guard let opaque = JS_GetOpaque(value, quickJSKitTypeFunctionClassID) else {
+    guard let opaque = JS_GetOpaque(value, quickJSKitClassIDs.typeFunction) else {
         return
     }
     let payload = opaque.assumingMemoryBound(to: QuickJSKitTypeFunctionPayload.self)
@@ -835,7 +844,7 @@ private let quickJSKitHostObjectFinalizer: @convention(c) (
     OpaquePointer?,
     JSValue
 ) -> Void = { runtime, value in
-    guard let opaque = JS_GetOpaque(value, quickJSKitHostObjectClassID) else {
+    guard let opaque = JS_GetOpaque(value, quickJSKitClassIDs.hostObject) else {
         return
     }
     let payload = opaque.assumingMemoryBound(to: QuickJSKitHostObjectPayload.self)
@@ -869,7 +878,7 @@ private let quickJSKitTypeFunctionCall: @convention(c) (
     guard let context,
           let runtime = JS_GetRuntime(context),
           let bridgeOpaque = JS_GetRuntimeOpaque(runtime),
-          let payloadOpaque = JS_GetOpaque(function, quickJSKitTypeFunctionClassID) else {
+          let payloadOpaque = JS_GetOpaque(function, quickJSKitClassIDs.typeFunction) else {
         return quickJSUndefined()
     }
     let bridge = Unmanaged<QuickJSRuntimeBridge>

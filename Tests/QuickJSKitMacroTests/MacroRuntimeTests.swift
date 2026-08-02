@@ -270,6 +270,39 @@ actor RuntimeSuspendingService {
 
 @Suite("Macro-generated runtime APIs")
 struct MacroRuntimeTests {
+    @Test("JavaScript-visible types initialize safely across concurrent runtimes")
+    func typeClassesInitializeAcrossConcurrentRuntimes() async throws {
+        let results = try await withThrowingTaskGroup(of: Int.self) { group in
+            for index in 0..<32 {
+                group.addTask {
+                    let runtime = try JavaScriptRuntime()
+                    if index.isMultiple(of: 2) {
+                        try await runtime.registerType(RuntimeUser.self)
+                        return try await runtime.evaluate(
+                            "new RuntimeUser({ id: 42, name: 'Ada' }).id",
+                            as: Int.self
+                        )
+                    }
+
+                    try await runtime.registerType(RuntimeUserService.self)
+                    return try await runtime.evaluate(
+                        "new RuntimeUserService(2).adjust(40)",
+                        as: Int.self
+                    )
+                }
+            }
+
+            var results: [Int] = []
+            for try await result in group {
+                results.append(result)
+            }
+            return results
+        }
+
+        #expect(results.count == 32)
+        #expect(results.allSatisfy { $0 == 42 })
+    }
+
     @Test("final Swift classes are constructible JavaScript host types")
     func hostTypesAreConstructible() async throws {
         let template = try JavaScriptRuntimeTemplate {

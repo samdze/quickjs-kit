@@ -7,6 +7,11 @@ Versioning.
 
 ## Unreleased
 
+### Changed
+
+- Windows runtimes omit JavaScript's POSIX-thread-based `Atomics` intrinsic
+  while retaining the complete QuickJSKit public API.
+
 ## [1.0.0-beta.1] - 2026-07-29
 
 ### Added

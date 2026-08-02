@@ -191,11 +191,13 @@ QuickJSKit requires Swift 6.3 or later with strict concurrency enabled.
 | watchOS | 9 |
 | visionOS | 1 |
 | Linux | Swift 6.3 supported distributions |
-| Windows | x86-64 Swift 6.3 |
+| Windows | x86-64 Swift 6.3; JavaScript `Atomics` unavailable |
 | Android | official Swift 6.3 SDK |
 
 Every declared platform is a release-blocking CI target. The public API does not
-vary by platform.
+vary by platform. The vendored QuickJS core omits its POSIX-thread-based
+JavaScript `Atomics` intrinsic on Windows; QuickJSKit promises, bindings, and
+runtime isolation are unaffected.
 
 ## Development
 

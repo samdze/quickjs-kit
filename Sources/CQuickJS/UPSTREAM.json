@@ -26,6 +26,12 @@
       "description": "Disables the POSIX-thread-based JavaScript Atomics intrinsic on Windows.",
       "upstreamSHA256": "a00762d2eee42316cecbc9c15efc4549b715ec500461845cd91b2a6c38190d08",
       "patchedSHA256": "0e6a8be3ccb65f7706752063d85981fb65d037e8969c646c20a4e0d6a8ee2c61"
+    },
+    {
+      "path": "patches/0002-use-native-windows-time.patch",
+      "description": "Uses native Windows UTC time and CRT headers instead of POSIX sys/time.h.",
+      "baseSHA256": "0e6a8be3ccb65f7706752063d85981fb65d037e8969c646c20a4e0d6a8ee2c61",
+      "patchedSHA256": "9f7a27b554fd7526aa62f76afc44c45783cccb9b5a8a6c09f1b09b1ee2423919"
     }
   ]
 }

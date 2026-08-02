@@ -19,4 +19,17 @@ struct PlatformCompatibilityExamplesTests {
         #endif
         #expect(sharedArrayBufferType == "function")
     }
+
+    @Test("the JavaScript clock and random source are available")
+    func javaScriptClockAndRandomSourceAreAvailable() async throws {
+        let runtime = try JavaScriptRuntime()
+
+        let now: Double = try await runtime.evaluate("Date.now()")
+        let random: Double = try await runtime.evaluate("Math.random()")
+
+        #expect(now.isFinite)
+        #expect(now > 0)
+        #expect(random >= 0)
+        #expect(random < 1)
+    }
 }

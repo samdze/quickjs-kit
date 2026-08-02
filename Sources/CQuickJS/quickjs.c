@@ -28,11 +28,17 @@
 #include <inttypes.h>
 #include <string.h>
 #include <assert.h>
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/time.h>
+#endif
 #include <time.h>
 #include <fenv.h>
 #include <math.h>
-#if defined(__APPLE__)
+#if defined(_WIN32)
+#include <malloc.h>
+#elif defined(__APPLE__)
 #include <malloc/malloc.h>
 #elif defined(__linux__) || defined(__GLIBC__)
 #include <malloc.h>
@@ -47143,11 +47149,28 @@ static uint64_t xorshift64star(uint64_t *pstate)
     return x * 0x2545F4914F6CDD1D;
 }
 
+static int64_t js_get_utc_time_us(void)
+{
+#if defined(_WIN32)
+    FILETIME file_time;
+    ULARGE_INTEGER file_time_value;
+
+    GetSystemTimeAsFileTime(&file_time);
+    file_time_value.LowPart = file_time.dwLowDateTime;
+    file_time_value.HighPart = file_time.dwHighDateTime;
+    return (int64_t)((file_time_value.QuadPart -
+                      UINT64_C(116444736000000000)) / 10);
+#else
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    return ((int64_t)tv.tv_sec * 1000000) + tv.tv_usec;
+#endif
+}
+
 static void js_random_init(JSContext *ctx)
 {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    ctx->random_state = ((int64_t)tv.tv_sec * 1000000) + tv.tv_usec;
+    ctx->random_state = js_get_utc_time_us();
     /* the state must be non zero */
     if (ctx->random_state == 0)
         ctx->random_state = 1;
@@ -55168,9 +55191,7 @@ static JSValue get_date_string(JSContext *ctx, JSValueConst this_val,
 
 /* OS dependent: return the UTC time in ms since 1970. */
 static int64_t date_now(void) {
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return (int64_t)tv.tv_sec * 1000 + (tv.tv_usec / 1000);
+    return js_get_utc_time_us() / 1000;
 }
 
 static JSValue js_date_constructor(JSContext *ctx, JSValueConst new_target,

@@ -148,7 +148,7 @@ jobs:
               Add-Content -Path $inventory -Value 'MISSING: diagnostic files'
             } else {
               foreach ($file in $files) {
-                $relative = $file.FullName.Substring($diagnostics.Length).TrimStart('\\', '/')
+                $relative = $file.FullName.Substring($diagnostics.Length) -replace '^[\\/]+', ''
                 Add-Content -Path $inventory -Value "FOUND: $relative ($($file.Length) bytes)"
               }
             }
@@ -194,6 +194,16 @@ jobs:
           Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value 'setup'
           swift --version | Set-Content -Path (Join-Path $diagnostics 'swift-version.txt')
           git rev-parse HEAD | Set-Content -Path (Join-Path $diagnostics 'revision.txt')
+          @(
+            foreach ($tool in @('procdump', 'cdb', 'gflags')) {
+              $command = Get-Command $tool -ErrorAction SilentlyContinue
+              if ($null -eq $command) {
+                "MISSING: $tool"
+              } else {
+                "FOUND: $tool at $($command.Source)"
+              }
+            }
+          ) | Set-Content -Path (Join-Path $diagnostics 'native-tools.txt')
 
           try {
             foreach ($application in $applications) {
@@ -215,7 +225,33 @@ jobs:
             }
 
             Invoke-Stage 'platform-smoke' {
-              swift run --package-path IntegrationTests/PlatformSmoke -Xswiftc -g -Xlinker /DEBUG
+              swift build --package-path IntegrationTests/PlatformSmoke --product QuickJSKitPlatformSmoke -Xswiftc -g -Xlinker /DEBUG
+              if ($LASTEXITCODE -ne 0) {
+                throw "Smoke build failed with exit code $LASTEXITCODE."
+              }
+              $smokeExecutable = @(
+                Get-ChildItem -Path 'IntegrationTests/PlatformSmoke/.build' -Recurse -File -Filter 'QuickJSKitPlatformSmoke.exe' |
+                  Sort-Object FullName
+              ) | Select-Object -First 1
+              if ($null -eq $smokeExecutable) {
+                throw 'Unable to locate the built QuickJSKitPlatformSmoke.exe.'
+              }
+              $binaryInfo = Join-Path $diagnostics 'smoke-binary.txt'
+              "executable: $($smokeExecutable.FullName)" | Set-Content -Path $binaryInfo
+              $smokePDB = [System.IO.Path]::ChangeExtension(
+                $smokeExecutable.FullName,
+                '.pdb'
+              )
+              if (Test-Path $smokePDB) {
+                "symbols: $smokePDB" | Add-Content -Path $binaryInfo
+              } else {
+                'symbols: MISSING' | Add-Content -Path $binaryInfo
+              }
+              Get-Content -Path $binaryInfo
+              & $smokeExecutable.FullName
+              if ($LASTEXITCODE -ne 0) {
+                throw "Smoke executable failed with exit code $LASTEXITCODE."
+              }
             }
             Invoke-Stage 'single-runtime' {
               swift test -Xlinker /DEBUG --filter 'evaluate accepts an explicit result type'

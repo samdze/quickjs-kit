@@ -35,7 +35,7 @@ private final class SmokeLogger {
             at: directory,
             withIntermediateDirectories: true
         )
-        FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        _ = FileManager.default.createFile(atPath: fileURL.path, contents: nil)
         fileHandle = try? FileHandle(forWritingTo: fileURL)
     }
 
@@ -140,22 +140,51 @@ private struct PlatformSmoke {
             return usage
         }
 
-        _ = try await logger.stage("raw-primitives") {
-            let number: JavaScriptValue = try await runtime.evaluate("42")
-            let boolean: JavaScriptValue = try await runtime.evaluate("true")
-            let string: JavaScriptValue = try await runtime.evaluate("'ok'")
-            let nullValue: JavaScriptValue = try await runtime.evaluate("null")
-            let undefined: JavaScriptValue = try await runtime.evaluate("undefined")
-            let bigInt: JavaScriptValue = try await runtime.evaluate(
+        _ = try await logger.stage("raw-number") {
+            let value: JavaScriptValue = try await runtime.evaluate("42")
+            guard value.numberValue == 42 else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-boolean") {
+            let value: JavaScriptValue = try await runtime.evaluate("true")
+            guard value.booleanValue == true else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-string") {
+            let value: JavaScriptValue = try await runtime.evaluate("'ok'")
+            guard value.stringValue == "ok" else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-null") {
+            let value: JavaScriptValue = try await runtime.evaluate("null")
+            guard value.isNull else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-undefined") {
+            let value: JavaScriptValue = try await runtime.evaluate("undefined")
+            guard value.isUndefined else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-bigint") {
+            let value: JavaScriptValue = try await runtime.evaluate(
                 "9007199254740993n"
             )
-            guard number.numberValue == 42,
-                  boolean.booleanValue == true,
-                  string.stringValue == "ok",
-                  nullValue.isNull,
-                  undefined.isUndefined,
-                  bigInt.bigIntValue != nil
-            else {
+            guard value.bigIntValue != nil else {
                 throw SmokeFailure.rawPrimitives
             }
             return true

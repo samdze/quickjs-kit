@@ -33,7 +33,91 @@ jobs:
       - name: Verify Swift version
         run: swift --version
       - name: Run debug tests
+        if: runner.os != 'Windows'
         run: swift test
+      - name: Diagnose Windows debug tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $diagnostics = Join-Path $env:RUNNER_TEMP 'quickjskit-windows-diagnostics'
+          $dumpDirectory = Join-Path $diagnostics 'dumps'
+          $localDumps = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          $applications = @(
+            'QuickJSKitPackageTests.xctest',
+            'QuickJSKitPlatformSmoke.exe'
+          )
+          $createdKeys = @()
+          $exitCode = 0
+
+          function Save-BinaryArtifacts([string] $fileName) {
+            Get-ChildItem -Path .build -Recurse -File -Filter $fileName |
+              ForEach-Object {
+                Copy-Item $_.FullName -Destination $diagnostics -Force
+                $pdb = [System.IO.Path]::ChangeExtension($_.FullName, 'pdb')
+                if (Test-Path $pdb) {
+                  Copy-Item $pdb -Destination $diagnostics -Force
+                }
+              }
+          }
+
+          function Invoke-Stage([string] $name, [scriptblock] $operation) {
+            Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value $name
+            & $operation
+            if ($LASTEXITCODE -ne 0) {
+              throw "The Windows diagnostic stage '$name' exited with code $LASTEXITCODE."
+            }
+          }
+
+          New-Item -ItemType Directory -Path $dumpDirectory -Force | Out-Null
+          swift --version | Set-Content -Path (Join-Path $diagnostics 'swift-version.txt')
+          git rev-parse HEAD | Set-Content -Path (Join-Path $diagnostics 'revision.txt')
+
+          try {
+            foreach ($application in $applications) {
+              $key = Join-Path $localDumps $application
+              if (Test-Path $key) {
+                throw "The hosted runner already has Windows Error Reporting configured for '$application'."
+              }
+              New-Item -Path $key -Force | Out-Null
+              New-ItemProperty -Path $key -Name DumpFolder -PropertyType ExpandString -Value $dumpDirectory -Force | Out-Null
+              New-ItemProperty -Path $key -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
+              $createdKeys += $key
+            }
+
+            Invoke-Stage 'platform-smoke' {
+              swift run --package-path IntegrationTests/PlatformSmoke
+            }
+            Invoke-Stage 'single-runtime' {
+              swift test --filter 'evaluate accepts an explicit result type'
+            }
+            Invoke-Stage 'concurrent-type-registration' {
+              swift test --filter 'JavaScript-visible types initialize safely across concurrent runtimes'
+            }
+            Invoke-Stage 'complete-suite' {
+              swift test
+            }
+          }
+          catch {
+            $_ | Out-String | Set-Content -Path (Join-Path $diagnostics 'failure.txt')
+            Save-BinaryArtifacts 'QuickJSKitPackageTests.xctest'
+            Save-BinaryArtifacts 'QuickJSKitPlatformSmoke.exe'
+            $exitCode = 1
+          }
+          finally {
+            foreach ($key in $createdKeys) {
+              Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          }
+
+          exit $exitCode
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: failure() && runner.os == 'Windows'
+        with:
+          name: quickjskit-windows-diagnostics-${{ github.sha }}
+          path: ${{ runner.temp }}/quickjskit-windows-diagnostics
+          if-no-files-found: error
+          retention-days: 7
       - name: Run release tests with warnings as errors
         run: swift test -c release -Xswiftc -warnings-as-errors
       - name: Build standalone consumers

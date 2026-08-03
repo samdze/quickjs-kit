@@ -42,7 +42,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $diagnostics = Join-Path $env:RUNNER_TEMP 'quickjskit-windows-diagnostics'
           $dumpDirectory = Join-Path $diagnostics 'dumps'
-          $localDumps = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          $localDumps = 'HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps'
           $applications = @(
             'QuickJSKitPackageTests.xctest',
             'QuickJSKitPlatformSmoke.exe'
@@ -63,9 +63,11 @@ jobs:
 
           function Invoke-Stage([string] $name, [scriptblock] $operation) {
             Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value $name
-            & $operation
-            if ($LASTEXITCODE -ne 0) {
-              throw "The Windows diagnostic stage '$name' exited with code $LASTEXITCODE."
+            $outputPath = Join-Path $diagnostics "$name.log"
+            & $operation 2>&1 | Tee-Object -FilePath $outputPath
+            $stageExitCode = $LASTEXITCODE
+            if ($stageExitCode -ne 0) {
+              throw "The Windows diagnostic stage '$name' exited with code $stageExitCode."
             }
           }
 
@@ -82,6 +84,7 @@ jobs:
               New-Item -Path $key -Force | Out-Null
               New-ItemProperty -Path $key -Name DumpFolder -PropertyType ExpandString -Value $dumpDirectory -Force | Out-Null
               New-ItemProperty -Path $key -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
+              New-ItemProperty -Path $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
               $createdKeys += $key
             }
 

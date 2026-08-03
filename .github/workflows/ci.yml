@@ -43,6 +43,7 @@ jobs:
           $diagnostics = Join-Path $env:RUNNER_TEMP 'quickjskit-windows-diagnostics'
           $dumpDirectory = Join-Path $diagnostics 'dumps'
           $localDumps = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          $standardDumpDirectory = Join-Path $env:LOCALAPPDATA 'CrashDumps'
           $buildRoots = @(
             '.build',
             'IntegrationTests/PlatformSmoke/.build'
@@ -53,62 +54,144 @@ jobs:
           )
           $createdKeys = @()
           $exitCode = 0
+          $diagnosticStart = Get-Date
+          $env:QUICKJSKIT_SMOKE_DIAGNOSTICS = $diagnostics
 
-          function Save-BinaryArtifacts([string] $fileName) {
+          function Save-BinaryArtifacts {
+            $binaryDirectory = Join-Path $diagnostics 'binaries'
+            New-Item -ItemType Directory -Path $binaryDirectory -Force | Out-Null
             foreach ($root in $buildRoots) {
               if (-not (Test-Path $root)) {
                 continue
               }
-              Get-ChildItem -Path $root -Recurse -File -Filter $fileName |
+              Get-ChildItem -Path $root -Recurse -File -Include '*.exe', '*.pdb' |
                 ForEach-Object {
-                  Copy-Item $_.FullName -Destination $diagnostics -Force
-                  $pdb = [System.IO.Path]::ChangeExtension($_.FullName, 'pdb')
-                  if (Test-Path $pdb) {
-                    Copy-Item $pdb -Destination $diagnostics -Force
+                  Copy-Item $_.FullName -Destination $binaryDirectory -Force
+                }
+            }
+          }
+
+          function Save-DumpArtifacts {
+            $dumpCandidates = @($dumpDirectory, $standardDumpDirectory)
+            for ($attempt = 0; $attempt -lt 30; $attempt++) {
+              $dumps = @(
+                foreach ($candidate in $dumpCandidates) {
+                  if (Test-Path $candidate) {
+                    Get-ChildItem -Path $candidate -Recurse -File -Filter '*.dmp'
                   }
                 }
+              )
+              if ($dumps.Count -gt 0) {
+                break
+              }
+              Start-Sleep -Seconds 1
+            }
+            foreach ($dump in $dumps) {
+              $destination = Join-Path $dumpDirectory $dump.Name
+              if ([System.IO.Path]::GetFullPath($dump.FullName) -ne
+                  [System.IO.Path]::GetFullPath($destination)) {
+                Copy-Item $dump.FullName -Destination $dumpDirectory -Force
+              }
+            }
+          }
+
+          function Save-WERDiagnostics {
+            $werFile = Join-Path $diagnostics 'wer.txt'
+            Set-Content -Path $werFile -Value "LocalDumps root: $localDumps"
+            foreach ($application in $applications) {
+              $key = Join-Path $localDumps $application
+              Add-Content -Path $werFile -Value "--- $key"
+              if (Test-Path $key) {
+                Get-ItemProperty -Path $key |
+                  Out-String |
+                  Add-Content -Path $werFile
+              } else {
+                Add-Content -Path $werFile -Value 'MISSING'
+              }
+            }
+            try {
+              Get-WinEvent -FilterHashtable @{
+                LogName = 'Application'
+                ProviderName = 'Windows Error Reporting'
+                StartTime = $diagnosticStart
+              } -ErrorAction Stop |
+                Select-Object -First 20 TimeCreated, Id, LevelDisplayName, Message |
+                Format-List |
+                Out-String |
+                Set-Content -Path (Join-Path $diagnostics 'wer-events.txt')
+            } catch {
+              Set-Content -Path (Join-Path $diagnostics 'wer-events.txt') -Value (
+                "Unable to read Windows Error Reporting events: " + $_.Exception.Message
+              )
             }
           }
 
           function Write-DiagnosticInventory {
             $inventory = Join-Path $diagnostics 'inventory.txt'
-            Set-Content -Path $inventory -Value 'Expected diagnostic files:'
-            foreach ($fileName in @(
-              'QuickJSKitPackageTests.xctest',
-              'QuickJSKitPackageTests.pdb',
-              'QuickJSKitPlatformSmoke.exe',
-              'QuickJSKitPlatformSmoke.pdb'
-            )) {
-              $matches = @(Get-ChildItem -Path $diagnostics -File -Filter $fileName)
-              if ($matches.Count -eq 0) {
-                Add-Content -Path $inventory -Value "MISSING: $fileName"
-              } else {
-                foreach ($match in $matches) {
-                  Add-Content -Path $inventory -Value "FOUND: $($match.Name) ($($match.Length) bytes)"
-                }
+            Set-Content -Path $inventory -Value 'Windows diagnostic inventory'
+            $revision = if (Test-Path (Join-Path $diagnostics 'revision.txt')) {
+              (Get-Content (Join-Path $diagnostics 'revision.txt')) -join ' '
+            } else {
+              '<unknown>'
+            }
+            $lastStage = if (Test-Path (Join-Path $diagnostics 'stage.txt')) {
+              (Get-Content (Join-Path $diagnostics 'stage.txt')) -join ' '
+            } else {
+              '<unknown>'
+            }
+            Add-Content -Path $inventory -Value "Revision: $revision"
+            Add-Content -Path $inventory -Value "Last stage: $lastStage"
+            Add-Content -Path $inventory -Value "Exit code: $exitCode"
+            Add-Content -Path $inventory -Value 'Files:'
+            $files = @(Get-ChildItem -Path $diagnostics -Recurse -File | Sort-Object FullName)
+            if ($files.Count -eq 0) {
+              Add-Content -Path $inventory -Value 'MISSING: diagnostic files'
+            } else {
+              foreach ($file in $files) {
+                $relative = $file.FullName.Substring($diagnostics.Length).TrimStart('\\', '/')
+                Add-Content -Path $inventory -Value "FOUND: $relative ($($file.Length) bytes)"
               }
             }
-            $dumps = @(Get-ChildItem -Path $dumpDirectory -File -ErrorAction SilentlyContinue)
-            if ($dumps.Count -eq 0) {
-              Add-Content -Path $inventory -Value 'MISSING: dumps/*.dmp'
+            $dumpFiles = @(
+              foreach ($candidate in @($dumpDirectory, $standardDumpDirectory)) {
+                if (Test-Path $candidate) {
+                  Get-ChildItem -Path $candidate -Recurse -File -Filter '*.dmp'
+                }
+              }
+            )
+            if ($dumpFiles.Count -eq 0) {
+              Add-Content -Path $inventory -Value 'MISSING: *.dmp (WER produced no dump)'
             } else {
-              foreach ($dump in $dumps) {
-                Add-Content -Path $inventory -Value "FOUND: dumps/$($dump.Name) ($($dump.Length) bytes)"
+              foreach ($dump in $dumpFiles) {
+                Add-Content -Path $inventory -Value "DUMP: $($dump.FullName) ($($dump.Length) bytes)"
               }
             }
           }
 
+          function Run-DiagnosticCollector([string] $name, [scriptblock] $operation) {
+            try {
+              & $operation
+            } catch {
+              Add-Content -Path (Join-Path $diagnostics 'collector-errors.txt') -Value (
+                "$name failed: " + $_.Exception.Message
+              )
+            }
+          }
+
           function Invoke-Stage([string] $name, [scriptblock] $operation) {
-            Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value $name
+            Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value "started: $name"
             $outputPath = Join-Path $diagnostics "$name.log"
             & $operation 2>&1 | Tee-Object -FilePath $outputPath
             $stageExitCode = $LASTEXITCODE
             if ($stageExitCode -ne 0) {
               throw "The Windows diagnostic stage '$name' exited with code $stageExitCode."
             }
+            Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value "completed: $name"
           }
 
           New-Item -ItemType Directory -Path $dumpDirectory -Force | Out-Null
+          New-Item -ItemType Directory -Path $standardDumpDirectory -Force | Out-Null
+          Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value 'setup'
           swift --version | Set-Content -Path (Join-Path $diagnostics 'swift-version.txt')
           git rev-parse HEAD | Set-Content -Path (Join-Path $diagnostics 'revision.txt')
 
@@ -119,31 +202,38 @@ jobs:
                 throw "The hosted runner already has Windows Error Reporting configured for '$application'."
               }
               New-Item -Path $key -Force | Out-Null
-              New-ItemProperty -Path $key -Name DumpFolder -PropertyType ExpandString -Value $dumpDirectory -Force | Out-Null
-              New-ItemProperty -Path $key -Name DumpType -PropertyType DWord -Value 1 -Force | Out-Null
-              New-ItemProperty -Path $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
               $createdKeys += $key
+              New-ItemProperty -Path $key -Name DumpFolder -PropertyType ExpandString -Value $dumpDirectory -Force | Out-Null
+              New-ItemProperty -Path $key -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null
+              New-ItemProperty -Path $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
+              $configured = Get-ItemProperty -Path $key
+              if ($configured.DumpFolder -ne $dumpDirectory -or
+                  [int] $configured.DumpType -ne 2 -or
+                  [int] $configured.DumpCount -ne 3) {
+                throw "Windows Error Reporting configuration for '$application' was not applied."
+              }
             }
 
             Invoke-Stage 'platform-smoke' {
-              swift run --package-path IntegrationTests/PlatformSmoke
+              swift run --package-path IntegrationTests/PlatformSmoke -Xswiftc -g -Xlinker /DEBUG
             }
             Invoke-Stage 'single-runtime' {
-              swift test --filter 'evaluate accepts an explicit result type'
+              swift test -Xlinker /DEBUG --filter 'evaluate accepts an explicit result type'
             }
             Invoke-Stage 'concurrent-type-registration' {
-              swift test --filter 'JavaScript-visible types initialize safely across concurrent runtimes'
+              swift test -Xlinker /DEBUG --filter 'JavaScript-visible types initialize safely across concurrent runtimes'
             }
             Invoke-Stage 'complete-suite' {
-              swift test
+              swift test -Xlinker /DEBUG
             }
           }
           catch {
             $_ | Out-String | Set-Content -Path (Join-Path $diagnostics 'failure.txt')
-            Save-BinaryArtifacts 'QuickJSKitPackageTests.xctest'
-            Save-BinaryArtifacts 'QuickJSKitPlatformSmoke.exe'
-            Write-DiagnosticInventory
             $exitCode = 1
+            Run-DiagnosticCollector 'dump collection' { Save-DumpArtifacts }
+            Run-DiagnosticCollector 'binary collection' { Save-BinaryArtifacts }
+            Run-DiagnosticCollector 'WER diagnostics' { Save-WERDiagnostics }
+            Run-DiagnosticCollector 'inventory' { Write-DiagnosticInventory }
           }
           finally {
             foreach ($key in $createdKeys) {

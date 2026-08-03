@@ -47,6 +47,10 @@ private struct PlatformSmoke {
         let raw = try await runtime.evaluate("20 + 22")
         guard raw.numberValue == 42 else { throw SmokeFailure.rawEvaluation }
 
+        write("stage: typed-struct-type")
+        let typeName: String = try await runtime.evaluate("typeof SmokeUser")
+        guard typeName == "function" else { throw SmokeFailure.typedType }
+
         write("stage: typed-struct-construction")
         let user: SmokeUser = try await runtime.evaluate(
             "new SmokeUser({ id: 42 })"
@@ -75,6 +79,7 @@ private struct PlatformSmoke {
 
 private enum SmokeFailure: Error {
     case rawEvaluation
+    case typedType
     case typedEvaluation
     case promise
     case module

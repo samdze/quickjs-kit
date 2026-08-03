@@ -42,7 +42,11 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $diagnostics = Join-Path $env:RUNNER_TEMP 'quickjskit-windows-diagnostics'
           $dumpDirectory = Join-Path $diagnostics 'dumps'
-          $localDumps = 'HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          $localDumps = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          $buildRoots = @(
+            '.build',
+            'IntegrationTests/PlatformSmoke/.build'
+          )
           $applications = @(
             'QuickJSKitPackageTests.xctest',
             'QuickJSKitPlatformSmoke.exe'
@@ -51,14 +55,47 @@ jobs:
           $exitCode = 0
 
           function Save-BinaryArtifacts([string] $fileName) {
-            Get-ChildItem -Path .build -Recurse -File -Filter $fileName |
-              ForEach-Object {
-                Copy-Item $_.FullName -Destination $diagnostics -Force
-                $pdb = [System.IO.Path]::ChangeExtension($_.FullName, 'pdb')
-                if (Test-Path $pdb) {
-                  Copy-Item $pdb -Destination $diagnostics -Force
+            foreach ($root in $buildRoots) {
+              if (-not (Test-Path $root)) {
+                continue
+              }
+              Get-ChildItem -Path $root -Recurse -File -Filter $fileName |
+                ForEach-Object {
+                  Copy-Item $_.FullName -Destination $diagnostics -Force
+                  $pdb = [System.IO.Path]::ChangeExtension($_.FullName, 'pdb')
+                  if (Test-Path $pdb) {
+                    Copy-Item $pdb -Destination $diagnostics -Force
+                  }
+                }
+            }
+          }
+
+          function Write-DiagnosticInventory {
+            $inventory = Join-Path $diagnostics 'inventory.txt'
+            Set-Content -Path $inventory -Value 'Expected diagnostic files:'
+            foreach ($fileName in @(
+              'QuickJSKitPackageTests.xctest',
+              'QuickJSKitPackageTests.pdb',
+              'QuickJSKitPlatformSmoke.exe',
+              'QuickJSKitPlatformSmoke.pdb'
+            )) {
+              $matches = @(Get-ChildItem -Path $diagnostics -File -Filter $fileName)
+              if ($matches.Count -eq 0) {
+                Add-Content -Path $inventory -Value "MISSING: $fileName"
+              } else {
+                foreach ($match in $matches) {
+                  Add-Content -Path $inventory -Value "FOUND: $($match.Name) ($($match.Length) bytes)"
                 }
               }
+            }
+            $dumps = @(Get-ChildItem -Path $dumpDirectory -File -ErrorAction SilentlyContinue)
+            if ($dumps.Count -eq 0) {
+              Add-Content -Path $inventory -Value 'MISSING: dumps/*.dmp'
+            } else {
+              foreach ($dump in $dumps) {
+                Add-Content -Path $inventory -Value "FOUND: dumps/$($dump.Name) ($($dump.Length) bytes)"
+              }
+            }
           }
 
           function Invoke-Stage([string] $name, [scriptblock] $operation) {
@@ -105,6 +142,7 @@ jobs:
             $_ | Out-String | Set-Content -Path (Join-Path $diagnostics 'failure.txt')
             Save-BinaryArtifacts 'QuickJSKitPackageTests.xctest'
             Save-BinaryArtifacts 'QuickJSKitPlatformSmoke.exe'
+            Write-DiagnosticInventory
             $exitCode = 1
           }
           finally {

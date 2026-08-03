@@ -151,6 +151,20 @@ struct ConversionExamplesTests {
         #expect(topLevel == nil)
     }
 
+    @Test("raw undefined expressions preserve identity and runtime recovery")
+    func rawUndefinedExpressionsRemainUsable() async throws {
+        let runtime = try JavaScriptRuntime()
+
+        let identifier = try await runtime.evaluate("undefined")
+        let voidZero = try await runtime.evaluate("void 0")
+        let globalProperty = try await runtime.evaluate("globalThis.undefined")
+
+        #expect(identifier.isUndefined)
+        #expect(voidZero.isUndefined)
+        #expect(globalProperty.isUndefined)
+        #expect(try await runtime.evaluate("40 + 2", as: Int.self) == 42)
+    }
+
     @Test("Float decoding rejects finite values outside its range")
     func floatRangeIsChecked() async throws {
         let runtime = try JavaScriptRuntime()

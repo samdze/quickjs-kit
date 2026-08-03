@@ -172,8 +172,31 @@ private struct PlatformSmoke {
             return true
         }
 
-        _ = try await logger.stage("raw-undefined") {
-            let value: JavaScriptValue = try await runtime.evaluate("undefined")
+        let undefinedValue: JavaScriptValue = try await logger.stage(
+            "raw-undefined-evaluate"
+        ) {
+            try await runtime.evaluate("undefined")
+        }
+
+        _ = try await logger.stage("raw-undefined-check") {
+            guard undefinedValue.isUndefined else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-void-zero-evaluate") {
+            let value: JavaScriptValue = try await runtime.evaluate("void 0")
+            guard value.isUndefined else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-global-undefined") {
+            let value: JavaScriptValue = try await runtime.evaluate(
+                "globalThis.undefined"
+            )
             guard value.isUndefined else {
                 throw SmokeFailure.rawPrimitives
             }

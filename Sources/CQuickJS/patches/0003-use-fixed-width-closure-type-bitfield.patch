@@ -1,0 +1,6 @@
+diff --git a/quickjs.c b/quickjs.c
+--- a/quickjs.c
++++ b/quickjs.c
+@@ -631 +631 @@
+-    JSClosureTypeEnum closure_type : 3;
++    uint8_t closure_type : 3; /* see JSClosureTypeEnum */

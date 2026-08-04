@@ -66,15 +66,17 @@ struct ParsedDocumentation {
 
 func documentation(of declaration: some SyntaxProtocol) -> ParsedDocumentation {
     let raw = declaration.leadingTrivia.description
+        .replacingOccurrences(of: "\r\n", with: "\n")
+        .replacingOccurrences(of: "\r", with: "\n")
     let lines = raw.split(separator: "\n", omittingEmptySubsequences: false).map {
         line -> String in
-        var text = line.trimmingCharacters(in: .whitespaces)
+        var text = line.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix("///") { text.removeFirst(3) }
         else if text.hasPrefix("/**") { text.removeFirst(3) }
         else if text.hasPrefix("/*!") { text.removeFirst(3) }
         else if text.hasPrefix("*") { text.removeFirst() }
         if text.hasSuffix("*/") { text.removeLast(2) }
-        return text.trimmingCharacters(in: .whitespaces)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     var result = ParsedDocumentation()
     var prose: [String] = []

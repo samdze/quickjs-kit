@@ -3,6 +3,40 @@ import QuickJSKit
 
 @Suite("Native promise interoperability examples")
 struct PromiseExamplesTests {
+    @Test("promise probing ignores primitives and recognizes native promises")
+    func promiseProbingClassifiesOnlyNativePromises() async throws {
+        let runtime = try JavaScriptRuntime()
+
+        let primitiveExpressions = [
+            "42",
+            "false",
+            "'text'",
+            "null",
+            "undefined",
+        ]
+        for expression in primitiveExpressions {
+            let value: JavaScriptValue = try await runtime.evaluate(expression)
+            #expect(value.objectValue == nil)
+        }
+
+        let object: JavaScriptValue = try await runtime.evaluate("({ answer: 42 })")
+        #expect(object.objectValue != nil)
+
+        let fulfilled: Int = try await runtime.evaluate("Promise.resolve(42)")
+        #expect(fulfilled == 42)
+
+        await #expect(throws: JavaScriptError.self) {
+            let _: Int = try await runtime.evaluate(
+                "Promise.reject(new Error('rejected'))"
+            )
+        }
+
+        let pending: JavaScriptValue = try await runtime.evaluate(
+            "new Promise(() => {})"
+        )
+        #expect(pending.objectValue != nil)
+    }
+
     @Test("typed reads automatically await native promises")
     func typedReadsAwaitPromises() async throws {
         let runtime = try JavaScriptRuntime()

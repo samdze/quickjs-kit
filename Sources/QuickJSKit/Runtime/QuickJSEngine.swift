@@ -562,6 +562,7 @@ internal final class QuickJSEngine {
     }
 
     internal func promiseState(of raw: JSValue) -> QuickJSPromiseState? {
+        guard JS_IsObject(raw) != 0 else { return nil }
         switch Int64(JS_PromiseState(context, raw).rawValue) {
         case 0:
             return .pending

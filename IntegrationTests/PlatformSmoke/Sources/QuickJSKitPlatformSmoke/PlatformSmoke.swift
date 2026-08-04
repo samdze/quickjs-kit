@@ -203,6 +203,32 @@ private struct PlatformSmoke {
             return true
         }
 
+        _ = try await logger.stage("raw-typeof-undefined") {
+            let value: JavaScriptValue = try await runtime.evaluate(
+                "typeof undefined"
+            )
+            guard value.stringValue == "undefined" else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-global-math") {
+            let value: JavaScriptValue = try await runtime.evaluate("Math")
+            guard value.objectValue != nil else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
+        _ = try await logger.stage("raw-arithmetic-recovery") {
+            let value: Int = try await runtime.evaluate("40 + 2")
+            guard value == 42 else {
+                throw SmokeFailure.rawPrimitives
+            }
+            return true
+        }
+
         _ = try await logger.stage("raw-bigint") {
             let value: JavaScriptValue = try await runtime.evaluate(
                 "9007199254740993n"

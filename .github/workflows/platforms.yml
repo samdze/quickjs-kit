@@ -114,16 +114,6 @@ jobs:
             exit 1
           fi
           ANDROID_NDK_HOME="$ndk_home" "${setup_scripts[0]}"
-      - name: Enable KVM for the Android emulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
-            sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm
-          test -w /dev/kvm
       - name: Build AArch64 consumer
         run: >-
           swift build
@@ -165,7 +155,7 @@ jobs:
               "$adb" devices -l >&2
               df -h "$RUNNER_TEMP" "$ANDROID_HOME" "$ANDROID_AVD_HOME" >&2
               cat "$ANDROID_AVD_HOME/$avd_name.avd/config.ini" >&2
-              tail -n 200 "$emulator_log" >&2
+              cat "$emulator_log" >&2
             fi
 
             return "$status"
@@ -176,19 +166,23 @@ jobs:
           printf 'no\n' | "$avdmanager" create avd --force \
             --name "$avd_name" \
             --package "system-images;android-35;default;x86_64"
-          "$emulator" -accel-check
-
-          "$emulator" -avd "$avd_name" \
-            -no-window \
-            -no-snapshot \
-            -noaudio \
-            -no-boot-anim \
-            -no-metrics \
-            -gpu swiftshader_indirect \
-            -accel on >"$emulator_log" 2>&1 &
+          emulator_args=(
+            -avd "$avd_name"
+            -no-window
+            -no-snapshot
+            -noaudio
+            -no-boot-anim
+            -no-metrics
+            -gpu swiftshader_indirect
+            -accel auto
+          )
+          printf 'Launching Android emulator (acceleration: auto):'
+          printf ' %q' "$emulator" "${emulator_args[@]}"
+          printf '\n'
+          "$emulator" "${emulator_args[@]}" >"$emulator_log" 2>&1 &
           emulator_pid=$!
 
-          deadline=$((SECONDS + 300))
+          deadline=$((SECONDS + 600))
           until [[ "$("$adb" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; do
             if ! kill -0 "$emulator_pid" 2>/dev/null; then
               echo "The Android emulator exited before completing boot." >&2
@@ -200,6 +194,9 @@ jobs:
             fi
             sleep 2
           done
+
+          echo "Android emulator output:"
+          cat "$emulator_log"
 
           smoke_binary="IntegrationTests/PlatformSmoke/.build/x86_64-unknown-linux-android28/debug/QuickJSKitPlatformSmoke"
           shared_library="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so"

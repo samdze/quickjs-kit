@@ -13,37 +13,107 @@ jobs:
     name: Validate release tag
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Validate semantic version and changelog
+      - name: Validate semantic version
         shell: bash
         run: |
           if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
             echo "The tag is not a semantic vX.Y.Z version." >&2
             exit 1
           fi
-          version="${GITHUB_REF_NAME#v}"
-          if ! grep -E -q "^## \\[?${version//./\\.}\\]?" CHANGELOG.md; then
-            echo "CHANGELOG.md has no entry for $version." >&2
-            exit 1
-          fi
 
-  readiness:
+  core:
     needs: validate-tag
-    uses: ./.github/workflows/release-readiness.yml
+    uses: ./.github/workflows/ci.yml
+
+  deep-quality:
+    needs: validate-tag
+    uses: ./.github/workflows/quality.yml
+
+  artifacts:
+    name: Reproducible release artifacts
+    needs: [core, deep-quality]
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+        with:
+          swift-version: "6.3.3"
+      - name: Verify locked and vendored inputs
+        run: |
+          test -f Tests/TypeScriptIntegration/package-lock.json
+          Scripts/verify-vendored-quickjs.sh
+          git diff --exit-code
+      - name: Build clean source archive
+        run: |
+          mkdir -p .build/readiness
+          git archive --format=tar.gz --prefix=quickjs-kit/ HEAD > .build/readiness/quickjs-kit-source.tar.gz
+      - name: Generate public symbol graphs
+        run: Scripts/check-symbol-graphs.sh .build/readiness/symbol-graphs
+      - name: Generate DocC archive
+        run: >-
+          xcodebuild docbuild
+          -scheme QuickJSKit
+          -destination 'platform=macOS'
+          -derivedDataPath .build/readiness/docc
+          -skipMacroValidation
+          OTHER_DOCC_FLAGS='--warnings-as-errors'
+      - name: Generate benchmark report
+        run: |
+          swift build --package-path Integration/PlatformSmoke -c release
+          consumer_directory=$(swift build --package-path Integration/PlatformSmoke -c release --show-bin-path)
+          for run in 1 2 3 4 5; do
+            swift run -c release QuickJSKitBenchmarks \
+              --iterations 100 \
+              --json-output ".build/readiness/benchmarks-$run.json" \
+              --consumer-executable "$consumer_directory/QuickJSKitPlatformSmoke"
+          done
+          swift run -c release QuickJSKitBenchmarks summarize \
+            --label "QuickJSKit release candidate" \
+            --json-output .build/readiness/benchmarks-summary.json \
+            --markdown-output .build/readiness/benchmarks-summary.md \
+            .build/readiness/benchmarks-1.json \
+            .build/readiness/benchmarks-2.json \
+            .build/readiness/benchmarks-3.json \
+            .build/readiness/benchmarks-4.json \
+            .build/readiness/benchmarks-5.json
+      - name: Collect license and vendored-source records
+        run: |
+          mkdir -p .build/readiness/licenses
+          cp LICENSE .build/readiness/licenses/QuickJSKit-LICENSE
+          cp Sources/CQuickJS/LICENSE .build/readiness/licenses/QuickJS-LICENSE
+          cp Sources/CQuickJS/UPSTREAM.json .build/readiness/
+          cp Sources/CQuickJS/CHECKSUMS.sha256 .build/readiness/
+      - name: Generate artifact checksums
+        working-directory: .build/readiness
+        run: |
+          find . -type f ! -name checksums.sha256 -print |
+            LC_ALL=C sort |
+            while IFS= read -r file; do
+              shasum -a 256 "$file"
+            done > checksums.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: quickjskit-release-${{ github.sha }}
+          path: .build/readiness
+          if-no-files-found: error
+          retention-days: 30
 
   publish:
     name: Publish GitHub release
-    needs: readiness
+    needs: artifacts
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: quickjskit-readiness-${{ github.sha }}
+          name: quickjskit-release-${{ github.sha }}
           path: release-artifacts
-      - name: Package release-readiness artifacts
+      - name: Package release artifacts
         run: tar -czf quickjskit-${GITHUB_REF_NAME}-artifacts.tar.gz -C release-artifacts .
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:

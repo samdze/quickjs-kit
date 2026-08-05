@@ -11,8 +11,8 @@ Objective-C, or UI frameworks. A platform-specific upstream incompatibility is
 isolated behind a minimal documented patch rather than changing public API.
 
 The release qualification matrix builds and tests native desktop platforms,
-builds generic Apple device consumers, and builds Android AArch64 plus an
-emulator smoke application. The portable smoke consumer exercises typed
+builds generic Apple device consumers, and builds Android AArch64 and x86-64
+consumers. The portable smoke consumer exercises typed
 evaluation, Codable, macros, native Promises, modules, and runtime templates.
 
 When troubleshooting:
@@ -21,4 +21,4 @@ When troubleshooting:
 - verify vendored sources with `Scripts/verify-vendored-quickjs.sh`;
 - clean only the affected package build directory;
 - confirm the target has the package's documented minimum platform;
-- reproduce with the standalone `IntegrationTests/PlatformSmoke` package.
+- reproduce with the standalone `Integration/PlatformSmoke` package.

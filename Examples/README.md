@@ -18,5 +18,5 @@ swift run --package-path Examples QuickJSKitExamples tooling
 - `tooling` derives schemas with `@JavaScriptExport` and writes a managed editor
   workspace.
 
-The separate `IntegrationTests/PlatformSmoke` package combines the portable
+The separate `Integration/PlatformSmoke` package combines the portable
 features used by the release-blocking platform matrix.

@@ -116,9 +116,6 @@ jobs, callbacks, loaders, and value registry.
 QuickJSKit/
 ├── Package.swift
 ├── AGENTS.md
-├── Documentation/
-│   ├── Architecture.md
-│   └── Decisions/
 ├── Sources/
 │   ├── CQuickJS/
 │   │   ├── include/module.modulemap
@@ -150,7 +147,7 @@ package harder to build and understand.
   line tools and platform-heavy `quickjs-libc` standard library.
 - Exposes a Clang module through `include/module.modulemap` for the Swift wrapper.
 - Contains no QuickJSKit-specific public shim API and is never re-exported.
-- Receives source updates as isolated commits with version, checksum, changelog,
+- Receives source updates as isolated commits with version, checksum, patch,
   and platform verification recorded.
 
 ### `QuickJSKit`
@@ -271,9 +268,8 @@ Documentation is part of the API contract.
   reentrancy, and important performance costs.
 - Include small compiling examples for primary workflows.
 - Never promise behavior that is only an implementation accident.
-- Update `Documentation/Architecture.md` when boundaries or data flow change.
-- Add or supersede an ADR for decisions that constrain later work. Do not edit
-  accepted decisions to hide history.
+- Keep boundary and data-flow changes documented in the relevant DocC catalog,
+  README guidance, and focused source comments.
 - User-facing diagnostics should name the operation and recovery action when
   possible, while preserving JavaScript stack traces.
 
@@ -283,10 +279,8 @@ Test observable behavior and architectural invariants at the lowest useful
 level. New behavior includes success, failure, boundary, teardown, and
 concurrency coverage.
 
-Repository-only tools are classified in
-`Documentation/Repository-Surface-Audit.md`. Do not extend an item marked as a
-removal candidate without first demonstrating a unique invariant that cannot
-be expressed by the retained package tests or tooling.
+Keep repository-only tooling focused on checks that protect a package contract
+or a platform promise; do not add checks that merely duplicate package tests.
 
 The long-term suite includes:
 
@@ -325,7 +319,7 @@ the toolchain supports them.
 
 ## Contribution workflow
 
-1. Read this file, the architecture document, and relevant ADRs.
+1. Read this file and the relevant source, tests, and package configuration.
 2. Keep the change within one coherent capability and state what is deferred.
 3. Discuss a new public abstraction or ownership strategy before implementing a
    large surface.
@@ -333,8 +327,16 @@ the toolchain supports them.
 5. Run `swift build` and `swift test` with Swift 6.3 or newer.
 6. Check strict-concurrency diagnostics and inspect public API for leaked C
    declarations.
-7. Update architecture and roadmap status when the design changes.
+7. Update relevant DocC catalogs and roadmap status when the design changes.
 8. Keep vendored upstream changes separate from handwritten wrapper changes.
+
+### Commit messages
+
+Use the Conventional Commits format for every commit:
+
+```text
+<type>(<scope>): <imperative summary>
+```
 
 Do not combine formatting, a QuickJS upgrade, and a feature in one review. A
 change is complete only when its failure and cleanup paths are as clear as its
@@ -441,7 +443,7 @@ happy path.
 - Reproducible vendored-source verification, dependency locks, API
   compatibility, sanitizer, and stress gates.
 - Blocking qualification for Apple platforms, Linux, Windows, and Android plus
-  non-mutating release-readiness automation.
+  non-mutating release automation.
 
 ## Design principles checklist
 

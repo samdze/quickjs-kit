@@ -19,8 +19,6 @@ jobs:
         os: [macos-15, ubuntu-24.04, windows-2022]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
       - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
         if: runner.os != 'Windows'
         with:
@@ -30,275 +28,20 @@ jobs:
         with:
           swift-version: swift-6.3.3-release
           swift-build: 6.3.3-RELEASE
-      - name: Verify Swift version
-        run: swift --version
       - name: Run debug tests
-        if: runner.os != 'Windows'
         run: swift test
-      - name: Diagnose Windows debug tests
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $diagnostics = Join-Path $env:RUNNER_TEMP 'quickjskit-windows-diagnostics'
-          $dumpDirectory = Join-Path $diagnostics 'dumps'
-          $localDumps = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
-          $standardDumpDirectory = Join-Path $env:LOCALAPPDATA 'CrashDumps'
-          $buildRoots = @(
-            '.build',
-            'IntegrationTests/PlatformSmoke/.build'
-          )
-          $applications = @(
-            'QuickJSKitPackageTests.xctest',
-            'QuickJSKitPlatformSmoke.exe'
-          )
-          $createdKeys = @()
-          $exitCode = 0
-          $diagnosticStart = Get-Date
-          $env:QUICKJSKIT_SMOKE_DIAGNOSTICS = $diagnostics
-
-          function Save-BinaryArtifacts {
-            $binaryDirectory = Join-Path $diagnostics 'binaries'
-            New-Item -ItemType Directory -Path $binaryDirectory -Force | Out-Null
-            foreach ($root in $buildRoots) {
-              if (-not (Test-Path $root)) {
-                continue
-              }
-              Get-ChildItem -Path $root -Recurse -File -Include '*.exe', '*.pdb' |
-                ForEach-Object {
-                  Copy-Item $_.FullName -Destination $binaryDirectory -Force
-                }
-            }
-          }
-
-          function Save-DumpArtifacts {
-            $dumpCandidates = @($dumpDirectory, $standardDumpDirectory)
-            for ($attempt = 0; $attempt -lt 30; $attempt++) {
-              $dumps = @(
-                foreach ($candidate in $dumpCandidates) {
-                  if (Test-Path $candidate) {
-                    Get-ChildItem -Path $candidate -Recurse -File -Filter '*.dmp'
-                  }
-                }
-              )
-              if ($dumps.Count -gt 0) {
-                break
-              }
-              Start-Sleep -Seconds 1
-            }
-            foreach ($dump in $dumps) {
-              $destination = Join-Path $dumpDirectory $dump.Name
-              if ([System.IO.Path]::GetFullPath($dump.FullName) -ne
-                  [System.IO.Path]::GetFullPath($destination)) {
-                Copy-Item $dump.FullName -Destination $dumpDirectory -Force
-              }
-            }
-          }
-
-          function Save-WERDiagnostics {
-            $werFile = Join-Path $diagnostics 'wer.txt'
-            Set-Content -Path $werFile -Value "LocalDumps root: $localDumps"
-            foreach ($application in $applications) {
-              $key = Join-Path $localDumps $application
-              Add-Content -Path $werFile -Value "--- $key"
-              if (Test-Path $key) {
-                Get-ItemProperty -Path $key |
-                  Out-String |
-                  Add-Content -Path $werFile
-              } else {
-                Add-Content -Path $werFile -Value 'MISSING'
-              }
-            }
-            try {
-              Get-WinEvent -FilterHashtable @{
-                LogName = 'Application'
-                ProviderName = 'Windows Error Reporting'
-                StartTime = $diagnosticStart
-              } -ErrorAction Stop |
-                Select-Object -First 20 TimeCreated, Id, LevelDisplayName, Message |
-                Format-List |
-                Out-String |
-                Set-Content -Path (Join-Path $diagnostics 'wer-events.txt')
-            } catch {
-              Set-Content -Path (Join-Path $diagnostics 'wer-events.txt') -Value (
-                "Unable to read Windows Error Reporting events: " + $_.Exception.Message
-              )
-            }
-          }
-
-          function Write-DiagnosticInventory {
-            $inventory = Join-Path $diagnostics 'inventory.txt'
-            Set-Content -Path $inventory -Value 'Windows diagnostic inventory'
-            $revision = if (Test-Path (Join-Path $diagnostics 'revision.txt')) {
-              (Get-Content (Join-Path $diagnostics 'revision.txt')) -join ' '
-            } else {
-              '<unknown>'
-            }
-            $lastStage = if (Test-Path (Join-Path $diagnostics 'stage.txt')) {
-              (Get-Content (Join-Path $diagnostics 'stage.txt')) -join ' '
-            } else {
-              '<unknown>'
-            }
-            Add-Content -Path $inventory -Value "Revision: $revision"
-            Add-Content -Path $inventory -Value "Last stage: $lastStage"
-            Add-Content -Path $inventory -Value "Exit code: $exitCode"
-            Add-Content -Path $inventory -Value 'Files:'
-            $files = @(Get-ChildItem -Path $diagnostics -Recurse -File | Sort-Object FullName)
-            if ($files.Count -eq 0) {
-              Add-Content -Path $inventory -Value 'MISSING: diagnostic files'
-            } else {
-              foreach ($file in $files) {
-                $relative = $file.FullName.Substring($diagnostics.Length) -replace '^[\\/]+', ''
-                Add-Content -Path $inventory -Value "FOUND: $relative ($($file.Length) bytes)"
-              }
-            }
-            $dumpFiles = @(
-              foreach ($candidate in @($dumpDirectory, $standardDumpDirectory)) {
-                if (Test-Path $candidate) {
-                  Get-ChildItem -Path $candidate -Recurse -File -Filter '*.dmp'
-                }
-              }
-            )
-            if ($dumpFiles.Count -eq 0) {
-              Add-Content -Path $inventory -Value 'MISSING: *.dmp (WER produced no dump)'
-            } else {
-              foreach ($dump in $dumpFiles) {
-                Add-Content -Path $inventory -Value "DUMP: $($dump.FullName) ($($dump.Length) bytes)"
-              }
-            }
-          }
-
-          function Run-DiagnosticCollector([string] $name, [scriptblock] $operation) {
-            try {
-              & $operation
-            } catch {
-              Add-Content -Path (Join-Path $diagnostics 'collector-errors.txt') -Value (
-                "$name failed: " + $_.Exception.Message
-              )
-            }
-          }
-
-          function Invoke-Stage([string] $name, [scriptblock] $operation) {
-            Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value "started: $name"
-            $outputPath = Join-Path $diagnostics "$name.log"
-            & $operation 2>&1 | Tee-Object -FilePath $outputPath
-            $stageExitCode = $LASTEXITCODE
-            if ($stageExitCode -ne 0) {
-              throw "The Windows diagnostic stage '$name' exited with code $stageExitCode."
-            }
-            Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value "completed: $name"
-          }
-
-          New-Item -ItemType Directory -Path $dumpDirectory -Force | Out-Null
-          New-Item -ItemType Directory -Path $standardDumpDirectory -Force | Out-Null
-          Set-Content -Path (Join-Path $diagnostics 'stage.txt') -Value 'setup'
-          swift --version | Set-Content -Path (Join-Path $diagnostics 'swift-version.txt')
-          git rev-parse HEAD | Set-Content -Path (Join-Path $diagnostics 'revision.txt')
-          @(
-            foreach ($tool in @('procdump', 'cdb', 'gflags')) {
-              $command = Get-Command $tool -ErrorAction SilentlyContinue
-              if ($null -eq $command) {
-                "MISSING: $tool"
-              } else {
-                "FOUND: $tool at $($command.Source)"
-              }
-            }
-          ) | Set-Content -Path (Join-Path $diagnostics 'native-tools.txt')
-
-          try {
-            foreach ($application in $applications) {
-              $key = Join-Path $localDumps $application
-              if (Test-Path $key) {
-                throw "The hosted runner already has Windows Error Reporting configured for '$application'."
-              }
-              New-Item -Path $key -Force | Out-Null
-              $createdKeys += $key
-              New-ItemProperty -Path $key -Name DumpFolder -PropertyType ExpandString -Value $dumpDirectory -Force | Out-Null
-              New-ItemProperty -Path $key -Name DumpType -PropertyType DWord -Value 2 -Force | Out-Null
-              New-ItemProperty -Path $key -Name DumpCount -PropertyType DWord -Value 3 -Force | Out-Null
-              $configured = Get-ItemProperty -Path $key
-              if ($configured.DumpFolder -ne $dumpDirectory -or
-                  [int] $configured.DumpType -ne 2 -or
-                  [int] $configured.DumpCount -ne 3) {
-                throw "Windows Error Reporting configuration for '$application' was not applied."
-              }
-            }
-
-            Invoke-Stage 'platform-smoke' {
-              swift build --package-path IntegrationTests/PlatformSmoke --product QuickJSKitPlatformSmoke -Xswiftc -g -Xlinker /DEBUG
-              if ($LASTEXITCODE -ne 0) {
-                throw "Smoke build failed with exit code $LASTEXITCODE."
-              }
-              $smokeExecutable = @(
-                Get-ChildItem -Path 'IntegrationTests/PlatformSmoke/.build' -Recurse -File -Filter 'QuickJSKitPlatformSmoke.exe' |
-                  Sort-Object FullName
-              ) | Select-Object -First 1
-              if ($null -eq $smokeExecutable) {
-                throw 'Unable to locate the built QuickJSKitPlatformSmoke.exe.'
-              }
-              $binaryInfo = Join-Path $diagnostics 'smoke-binary.txt'
-              "executable: $($smokeExecutable.FullName)" | Set-Content -Path $binaryInfo
-              $smokePDB = [System.IO.Path]::ChangeExtension(
-                $smokeExecutable.FullName,
-                '.pdb'
-              )
-              if (Test-Path $smokePDB) {
-                "symbols: $smokePDB" | Add-Content -Path $binaryInfo
-              } else {
-                'symbols: MISSING' | Add-Content -Path $binaryInfo
-              }
-              Get-Content -Path $binaryInfo
-              & $smokeExecutable.FullName
-              if ($LASTEXITCODE -ne 0) {
-                throw "Smoke executable failed with exit code $LASTEXITCODE."
-              }
-            }
-            Invoke-Stage 'single-runtime' {
-              swift test -Xlinker /DEBUG --filter 'evaluate accepts an explicit result type'
-            }
-            Invoke-Stage 'concurrent-type-registration' {
-              swift test -Xlinker /DEBUG --filter 'JavaScript-visible types initialize safely across concurrent runtimes'
-            }
-            Invoke-Stage 'complete-suite' {
-              swift test -Xlinker /DEBUG
-            }
-          }
-          catch {
-            $_ | Out-String | Set-Content -Path (Join-Path $diagnostics 'failure.txt')
-            $exitCode = 1
-            Run-DiagnosticCollector 'dump collection' { Save-DumpArtifacts }
-            Run-DiagnosticCollector 'binary collection' { Save-BinaryArtifacts }
-            Run-DiagnosticCollector 'WER diagnostics' { Save-WERDiagnostics }
-            Run-DiagnosticCollector 'inventory' { Write-DiagnosticInventory }
-          }
-          finally {
-            foreach ($key in $createdKeys) {
-              Remove-Item -Path $key -Recurse -Force -ErrorAction SilentlyContinue
-            }
-          }
-
-          exit $exitCode
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: failure() && runner.os == 'Windows'
-        with:
-          name: quickjskit-windows-diagnostics-${{ github.sha }}
-          path: ${{ runner.temp }}/quickjskit-windows-diagnostics
-          if-no-files-found: error
-          retention-days: 7
       - name: Run release tests with warnings as errors
         run: swift test -c release -Xswiftc -warnings-as-errors
       - name: Build standalone consumers
-        run: >-
+        run: |
           swift build --package-path Examples
-          && swift build --package-path IntegrationTests/PlatformSmoke
+          swift build --package-path Integration/PlatformSmoke
 
   release-quality:
     name: Release quality gates
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 0
       - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
         with:
           swift-version: "6.3.3"
@@ -326,3 +69,109 @@ jobs:
           baseline=$(tr -d '[:space:]' < .github/api-baseline)
           test -n "$baseline"
           swift package diagnose-api-breaking-changes "$baseline"
+
+  apple-devices:
+    name: ${{ matrix.platform }}
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: iOS
+            destination: generic/platform=iOS
+          - platform: tvOS
+            destination: generic/platform=tvOS
+          - platform: watchOS
+            destination: generic/platform=watchOS
+          - platform: visionOS
+            destination: generic/platform=visionOS
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Verify the Swift 6.3 Xcode toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcrun swift --version | grep -Eq 'Swift version 6\.3|Apple Swift version 6\.3'
+      - name: Build library product
+        run: >-
+          xcodebuild build
+          -scheme QuickJSKit
+          -destination '${{ matrix.destination }}'
+          -skipMacroValidation
+          CODE_SIGNING_ALLOWED=NO
+      - name: Build macro declarations product
+        run: >-
+          xcodebuild build
+          -scheme QuickJSKitMacros
+          -destination '${{ matrix.destination }}'
+          -skipMacroValidation
+          CODE_SIGNING_ALLOWED=NO
+      - name: Build portable consumer
+        working-directory: Integration/PlatformSmoke
+        run: >-
+          xcodebuild build
+          -scheme QuickJSKitPlatformSmoke
+          -destination '${{ matrix.destination }}'
+          -skipMacroValidation
+          CODE_SIGNING_ALLOWED=NO
+
+  android:
+    name: Android architecture builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+        with:
+          swift-version: "6.3.3"
+      - name: Select the Swift SDK directory
+        shell: bash
+        run: printf 'SWIFT_SDKS_PATH=%s\n' "$RUNNER_TEMP/swift-sdks" >> "$GITHUB_ENV"
+      - name: Install verified Swift Android SDK
+        run: >-
+          swift sdk install
+          --swift-sdks-path "$SWIFT_SDKS_PATH"
+          https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz
+          --checksum d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5
+      - name: Install and configure Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_list="$(swift sdk list --swift-sdks-path "$SWIFT_SDKS_PATH")"
+          printf '%s\n' "$sdk_list"
+          grep -Fq "swift-6.3.3-RELEASE_android" <<<"$sdk_list"
+
+          android_sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          set +o pipefail
+          yes | "$android_sdkmanager" --licenses >/dev/null
+          set -o pipefail
+          "$android_sdkmanager" "ndk;27.3.13750724"
+          ndk_home="$ANDROID_HOME/ndk/27.3.13750724"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ndk_home" >> "$GITHUB_ENV"
+
+          test -d "$SWIFT_SDKS_PATH"
+          mapfile -t setup_scripts < <(
+            find "$SWIFT_SDKS_PATH" \
+              -type f \
+              -path "*/swift-android/scripts/setup-android-sdk.sh" \
+              -print
+          )
+          test "${#setup_scripts[@]}" -eq 1
+          ANDROID_NDK_HOME="$ndk_home" "${setup_scripts[0]}"
+      - name: Build AArch64 consumer
+        run: >-
+          swift build
+          --package-path Integration/PlatformSmoke
+          --swift-sdks-path "$SWIFT_SDKS_PATH"
+          --swift-sdk aarch64-unknown-linux-android28
+          --static-swift-stdlib
+      - name: Build x86-64 consumer
+        run: >-
+          swift build
+          --package-path Integration/PlatformSmoke
+          --swift-sdks-path "$SWIFT_SDKS_PATH"
+          --swift-sdk x86_64-unknown-linux-android28
+          --static-swift-stdlib

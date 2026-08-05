@@ -64,6 +64,19 @@ jobs:
           -derivedDataPath .build/readiness/docc
           -skipMacroValidation
           OTHER_DOCC_FLAGS='--warnings-as-errors'
+
+      - name: Package DocC archive
+        shell: bash
+        run: |
+          docc_archive=.build/readiness/docc/Build/Products/Debug/QuickJSKit.doccarchive
+          docc_tarball=.build/readiness/QuickJSKit.doccarchive.tar.gz
+          test -d "$docc_archive"
+          tar -czf "$docc_tarball" \
+            -C "$(dirname "$docc_archive")" \
+            "$(basename "$docc_archive")"
+          rm -rf .build/readiness/docc
+          test -f "$docc_tarball"
+          tar -tzf "$docc_tarball" >/dev/null
       - name: Generate benchmark report
         run: |
           swift build --package-path Integration/PlatformSmoke -c release
@@ -98,6 +111,16 @@ jobs:
             while IFS= read -r file; do
               shasum -a 256 "$file"
             done > checksums.sha256
+
+      - name: Validate release artifact paths
+        shell: bash
+        run: |
+          if find .build/readiness -print | LC_ALL=C grep -E '[":<>|*?]'; then
+            echo "Release artifact contains a path incompatible with upload-artifact." >&2
+            exit 1
+          fi
+          grep -F 'QuickJSKit.doccarchive.tar.gz' .build/readiness/checksums.sha256
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: quickjskit-release-${{ github.sha }}
@@ -150,6 +173,15 @@ jobs:
           name: quickjskit-release-${{ github.sha }}
           path: release-artifacts
 
+      - name: Extract DocC archive
+        shell: bash
+        run: |
+          docc_tarball=$(find release-artifacts -type f -name 'QuickJSKit.doccarchive.tar.gz' -print -quit)
+          test -n "$docc_tarball"
+          mkdir -p .build/docc
+          tar -xzf "$docc_tarball" -C .build/docc
+          test -d .build/docc/QuickJSKit.doccarchive
+
       - name: Prepare Pages site
         shell: bash
         run: |
@@ -166,7 +198,7 @@ jobs:
         id: archive
         shell: bash
         run: |
-          archive=$(find release-artifacts -type d -name 'QuickJSKit.doccarchive' -print -quit)
+          archive=$(find .build/docc -type d -name 'QuickJSKit.doccarchive' -print -quit)
           test -n "$archive"
           test -d "$archive"
           echo "path=$archive" >> "$GITHUB_OUTPUT"

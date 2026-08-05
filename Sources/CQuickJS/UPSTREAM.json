@@ -23,7 +23,7 @@
   "patches": [
     {
       "path": "patches/windows-compatibility.patch",
-      "description": "Consolidates the Windows compatibility fixes for Atomics, native UTC time, CRT headers, and closure bit-fields.",
+      "description": "Consolidates the Windows and cross-toolchain compatibility fixes for Atomics, native UTC time, CRT headers, closure bit-fields, and typed allocator callbacks.",
       "files": {
         "dtoa.c": {
           "upstreamSHA256": "af5abd68fa9806d1a19bdd5f2daef00d5fd0990ae56311382dfed4700343f074",
@@ -31,7 +31,7 @@
         },
         "quickjs.c": {
           "upstreamSHA256": "a00762d2eee42316cecbc9c15efc4549b715ec500461845cd91b2a6c38190d08",
-          "patchedSHA256": "e50b829b757a64fc1d0a6d3d30adee8dd7cfaa161ddcfba44ae7ade9667e18ea"
+          "patchedSHA256": "2b8141220a7003de99b3ea46ca4bb724fc5cb2eed15d972702ccfd918a6ebd9a"
         }
       }
     }

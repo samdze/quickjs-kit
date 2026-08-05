@@ -2,57 +2,45 @@ diff --git a/dtoa.c b/dtoa.c
 index ac1be8d..9732a77 100644
 --- a/dtoa.c
 +++ b/dtoa.c
-@@ -28,6 +28,5 @@
- #include <string.h>
- #include <assert.h>
- #include <ctype.h>
+@@ -31 +30,0 @@
 -#include <sys/time.h>
- #include <math.h>
- #include <setjmp.h>
 diff --git a/quickjs.c b/quickjs.c
-index fa5a7a9..b8de5f3 100644
+index fa5a7a9..162d8e0 100644
 --- a/quickjs.c
 +++ b/quickjs.c
-@@ -28,11 +28,17 @@
- #include <inttypes.h>
- #include <string.h>
- #include <assert.h>
+@@ -30,0 +31,3 @@
 +#if defined(_WIN32)
 +#include <windows.h>
 +#else
- #include <sys/time.h>
+@@ -31,0 +35 @@
 +#endif
- #include <time.h>
- #include <fenv.h>
- #include <math.h>
+@@ -35 +39,3 @@
 -#if defined(__APPLE__)
 +#if defined(_WIN32)
 +#include <malloc.h>
 +#elif defined(__APPLE__)
- #include <malloc/malloc.h>
- #elif defined(__linux__) || defined(__GLIBC__)
- #include <malloc.h>
-@@ -69,5 +75,5 @@
- /* define to include Atomics.* operations which depend on the OS
-    threads */
+@@ -71 +77 @@
 -#if !defined(__EMSCRIPTEN__)
 +#if !defined(__EMSCRIPTEN__) && !defined(_WIN32)
- #define CONFIG_ATOMICS
- #endif
-@@ -624,5 +630,5 @@
- typedef struct JSClosureVar {
+@@ -625 +631 @@ typedef struct JSClosureVar {
 -    JSClosureTypeEnum closure_type : 3;
 +    uint8_t closure_type : 3; /* see JSClosureTypeEnum */
-     uint8_t is_lexical : 1; /* lexical variable */
-     uint8_t is_const : 1; /* const variable (is_lexical = 1 if is_const = 1 */
-     uint8_t var_kind : 4; /* see JSVarKindEnum */
-@@ -47143,11 +47149,28 @@ static uint64_t xorshift64star(uint64_t *pstate)
-     return x * 0x2545F4914F6CDD1D;
- }
- 
+@@ -1814,0 +1821,5 @@ void *js_realloc_rt(JSRuntime *rt, void *ptr, size_t size)
++static void *js_realloc_dbuf(void *opaque, void *ptr, size_t size)
++{
++    return js_realloc_rt((JSRuntime *)opaque, ptr, size);
++}
++
+@@ -1937 +1948 @@ static inline void js_dbuf_init(JSContext *ctx, DynBuf *s)
+-    dbuf_init2(s, ctx->rt, (DynBufReallocFunc *)js_realloc_rt);
++    dbuf_init2(s, ctx->rt, js_realloc_dbuf);
+@@ -46364 +46375 @@ static int js_string_normalize1(JSContext *ctx, uint32_t **pout_buf,
+-                                ctx->rt, (DynBufReallocFunc *)js_realloc_rt);
++                                ctx->rt, js_realloc_dbuf);
+@@ -47146 +47157 @@ static uint64_t xorshift64star(uint64_t *pstate)
 -static void js_random_init(JSContext *ctx)
 +static int64_t js_get_utc_time_us(void)
- {
+@@ -47147,0 +47159,10 @@ static void js_random_init(JSContext *ctx)
 +#if defined(_WIN32)
 +    FILETIME file_time;
 +    ULARGE_INTEGER file_time_value;
@@ -63,9 +51,9 @@ index fa5a7a9..b8de5f3 100644
 +    return (int64_t)((file_time_value.QuadPart -
 +                      UINT64_C(116444736000000000)) / 10);
 +#else
-     struct timeval tv;
+@@ -47148,0 +47170 @@ static void js_random_init(JSContext *ctx)
 +
-     gettimeofday(&tv, NULL);
+@@ -47150 +47172,7 @@ static void js_random_init(JSContext *ctx)
 -    ctx->random_state = ((int64_t)tv.tv_sec * 1000000) + tv.tv_usec;
 +    return ((int64_t)tv.tv_sec * 1000000) + tv.tv_usec;
 +#endif
@@ -74,15 +62,8 @@ index fa5a7a9..b8de5f3 100644
 +static void js_random_init(JSContext *ctx)
 +{
 +    ctx->random_state = js_get_utc_time_us();
-     /* the state must be non zero */
-     if (ctx->random_state == 0)
-         ctx->random_state = 1;
-@@ -55168,9 +55191,7 @@ static JSValue get_date_string(JSContext *ctx, JSValueConst this_val,
- 
- /* OS dependent: return the UTC time in ms since 1970. */
- static int64_t date_now(void) {
+@@ -55171,3 +55199 @@ static int64_t date_now(void) {
 -    struct timeval tv;
 -    gettimeofday(&tv, NULL);
 -    return (int64_t)tv.tv_sec * 1000 + (tv.tv_usec / 1000);
 +    return js_get_utc_time_us() / 1000;
- }

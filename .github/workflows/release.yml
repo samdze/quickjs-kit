@@ -16,8 +16,8 @@ jobs:
       - name: Validate semantic version
         shell: bash
         run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "The tag is not a semantic vX.Y.Z version." >&2
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "The tag is not a semantic vX.Y.Z or vX.Y.Z-prerelease version." >&2
             exit 1
           fi
 
@@ -123,3 +123,125 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
           files: quickjskit-${{ github.ref_name }}-artifacts.tar.gz
+
+  documentation:
+    name: Documentation
+    needs: artifacts
+    runs-on: macos-26
+    concurrency:
+      group: documentation-pages
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.app/Contents/Developer
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: quickjskit-release-${{ github.sha }}
+          path: release-artifacts
+
+      - name: Prepare Pages site
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git fetch --no-tags origin gh-pages
+            git worktree add --detach site origin/gh-pages
+          else
+            git worktree add --detach site HEAD
+            git -C site checkout --orphan gh-pages
+            git -C site rm -rf . || true
+          fi
+
+      - name: Locate DocC archive
+        id: archive
+        shell: bash
+        run: |
+          archive=$(find release-artifacts -type d -name 'QuickJSKit.doccarchive' -print -quit)
+          test -n "$archive"
+          test -d "$archive"
+          echo "path=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Generate versioned DocC site
+        shell: bash
+        env:
+          DOCC_ARCHIVE: ${{ steps.archive.outputs.path }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p .build/pages
+          rm -rf ".build/pages/version" ".build/pages/latest"
+          mkdir -p ".build/pages/version" ".build/pages/latest"
+
+          xcrun docc process-archive transform-for-static-hosting \
+            "$DOCC_ARCHIVE" \
+            --output-path ".build/pages/version" \
+            --hosting-base-path "quickjs-kit/versions/$version"
+
+          mkdir -p "site/versions/$version"
+          rsync -a --delete \
+            ".build/pages/version/" \
+            "site/versions/$version/"
+
+          if [[ "$version" != *-* ]]; then
+            xcrun docc process-archive transform-for-static-hosting \
+              "$DOCC_ARCHIVE" \
+              --output-path ".build/pages/latest" \
+              --hosting-base-path quickjs-kit
+
+            rsync -a --delete --exclude 'versions/' \
+              ".build/pages/latest/" \
+              site/
+          fi
+
+      - name: Generate version index
+        shell: bash
+        run: |
+          mkdir -p site/versions
+          {
+            printf '%s\n' '<!doctype html>' '<html lang="en">' '<head>' \
+              '<meta charset="utf-8">' \
+              '<meta name="viewport" content="width=device-width, initial-scale=1">' \
+              '<title>QuickJSKit Documentation Versions</title>' \
+              '</head><body>' '<h1>QuickJSKit Documentation</h1>' \
+              '<p><a href="../documentation/quickjskit/">Latest stable</a></p>' \
+              '<h2>Versions</h2>' '<ul>'
+            find site/versions -mindepth 1 -maxdepth 1 -type d -print |
+              sed 's#^site/versions/##' |
+              LC_ALL=C sort -r |
+              while IFS= read -r version; do
+                printf '<li><a href="./%s/documentation/quickjskit/">%s</a></li>\n' \
+                  "$version" "$version"
+              done
+            printf '%s\n' '</ul>' '</body></html>'
+          } > site/versions/index.html
+
+      - name: Commit Pages site
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          git -C site config user.name github-actions[bot]
+          git -C site config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git -C site add -A
+          if git -C site diff --cached --quiet; then
+            echo "Pages site is already up to date."
+          else
+            git -C site commit -m "docs: publish $version documentation"
+            git -C site push origin HEAD:gh-pages
+          fi
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: site
+
+      - name: Deploy documentation
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128

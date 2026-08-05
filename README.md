@@ -170,6 +170,9 @@ The DocC catalog contains task-oriented guides for evaluation, conversions,
 bindings, Promises, modules, templates, TypeScript tooling, security, platform
 support, ownership, cancellation, and performance.
 
+Read the [hosted DocC documentation](https://samdze.github.io/quickjs-kit/documentation/quickjskit/),
+or browse the [available documentation versions](https://samdze.github.io/quickjs-kit/versions/).
+
 Standalone packages under [Examples](Examples) demonstrate:
 
 - typed evaluation and Codable;

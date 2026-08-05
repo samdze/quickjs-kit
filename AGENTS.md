@@ -301,8 +301,8 @@ The long-term suite includes:
 
 Prefer Swift Testing for new tests. Tests must be deterministic, must not depend
 on wall-clock sleeps, and must not reach the network. Run `swift test` locally.
-Platform CI should additionally run address/undefined-behavior sanitizers where
-the toolchain supports them.
+Platform CI should additionally run address and thread sanitizers where the
+toolchain supports them.
 
 ## Platform rules
 

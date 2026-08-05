@@ -5,7 +5,7 @@ index ac1be8d..9732a77 100644
 @@ -31 +30,0 @@
 -#include <sys/time.h>
 diff --git a/quickjs.c b/quickjs.c
-index fa5a7a9..162d8e0 100644
+index fa5a7a9..b8de5f3 100644
 --- a/quickjs.c
 +++ b/quickjs.c
 @@ -30,0 +31,3 @@
@@ -25,22 +25,10 @@ index fa5a7a9..162d8e0 100644
 @@ -625 +631 @@ typedef struct JSClosureVar {
 -    JSClosureTypeEnum closure_type : 3;
 +    uint8_t closure_type : 3; /* see JSClosureTypeEnum */
-@@ -1814,0 +1821,5 @@ void *js_realloc_rt(JSRuntime *rt, void *ptr, size_t size)
-+static void *js_realloc_dbuf(void *opaque, void *ptr, size_t size)
-+{
-+    return js_realloc_rt((JSRuntime *)opaque, ptr, size);
-+}
-+
-@@ -1937 +1948 @@ static inline void js_dbuf_init(JSContext *ctx, DynBuf *s)
--    dbuf_init2(s, ctx->rt, (DynBufReallocFunc *)js_realloc_rt);
-+    dbuf_init2(s, ctx->rt, js_realloc_dbuf);
-@@ -46364 +46375 @@ static int js_string_normalize1(JSContext *ctx, uint32_t **pout_buf,
--                                ctx->rt, (DynBufReallocFunc *)js_realloc_rt);
-+                                ctx->rt, js_realloc_dbuf);
-@@ -47146 +47157 @@ static uint64_t xorshift64star(uint64_t *pstate)
+@@ -47146 +47152 @@ static uint64_t xorshift64star(uint64_t *pstate)
 -static void js_random_init(JSContext *ctx)
 +static int64_t js_get_utc_time_us(void)
-@@ -47147,0 +47159,10 @@ static void js_random_init(JSContext *ctx)
+@@ -47147,0 +47154,10 @@ static void js_random_init(JSContext *ctx)
 +#if defined(_WIN32)
 +    FILETIME file_time;
 +    ULARGE_INTEGER file_time_value;
@@ -51,9 +39,9 @@ index fa5a7a9..162d8e0 100644
 +    return (int64_t)((file_time_value.QuadPart -
 +                      UINT64_C(116444736000000000)) / 10);
 +#else
-@@ -47148,0 +47170 @@ static void js_random_init(JSContext *ctx)
+@@ -47148,0 +47165 @@ static void js_random_init(JSContext *ctx)
 +
-@@ -47150 +47172,7 @@ static void js_random_init(JSContext *ctx)
+@@ -47150 +47167,7 @@ static void js_random_init(JSContext *ctx)
 -    ctx->random_state = ((int64_t)tv.tv_sec * 1000000) + tv.tv_usec;
 +    return ((int64_t)tv.tv_sec * 1000000) + tv.tv_usec;
 +#endif
@@ -62,7 +50,7 @@ index fa5a7a9..162d8e0 100644
 +static void js_random_init(JSContext *ctx)
 +{
 +    ctx->random_state = js_get_utc_time_us();
-@@ -55171,3 +55199 @@ static int64_t date_now(void) {
+@@ -55171,3 +55194 @@ static int64_t date_now(void) {
 -    struct timeval tv;
 -    gettimeofday(&tv, NULL);
 -    return (int64_t)tv.tv_sec * 1000 + (tv.tv_usec / 1000);

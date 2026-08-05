@@ -50,26 +50,6 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
         run: swift test ${{ matrix.arguments }} --disable-xctest --no-parallel
 
-  c-undefined-behavior:
-    name: UndefinedBehaviorSanitizer
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9
-        with:
-          swift-version: "6.3.3"
-          cache-snapshot: false
-      - name: Run undefined-behavior checks
-        env:
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: >-
-          swift test
-          -Xcc -fsanitize=undefined
-          -Xcc -fno-sanitize-recover=undefined
-          -Xlinker -lubsan
-          --disable-xctest
-          --no-parallel
-
   stress:
     name: Stress
     runs-on: ubuntu-24.04

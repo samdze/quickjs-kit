@@ -60,9 +60,13 @@ jobs:
           swift-version: "6.3.3"
           cache-snapshot: false
       - name: Run undefined-behavior checks
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: >-
           swift test
-          --sanitize=undefined
+          -Xcc -fsanitize=undefined
+          -Xcc -fno-sanitize-recover=undefined
+          -Xlinker -lubsan
           --disable-xctest
           --no-parallel
 

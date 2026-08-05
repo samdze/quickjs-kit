@@ -45,7 +45,7 @@ extension JavaScriptRuntime {
     /// Evaluates JavaScript and immediately decodes a result that does not
     /// require external asynchronous progress.
     ///
-    /// This overload is selected from a synchronous ``run(_:)`` closure.
+    /// This overload is selected from a synchronous `run(_:)` closure.
     /// A Promise that remains pending after the immediate job checkpoint
     /// throws ``JavaScriptError/Kind/wouldSuspend``.
     public func evaluate<T: Decodable & Sendable>(

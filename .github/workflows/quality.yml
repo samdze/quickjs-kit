@@ -48,7 +48,7 @@ jobs:
       - name: Run sanitizer suite
         env:
           ASAN_OPTIONS: detect_leaks=1:strict_string_checks=1
-        run: swift test ${{ matrix.arguments }} --no-parallel
+        run: swift test ${{ matrix.arguments }} --disable-xctest --no-parallel
 
   c-undefined-behavior:
     name: UndefinedBehaviorSanitizer
@@ -59,11 +59,12 @@ jobs:
         with:
           swift-version: "6.3.3"
           cache-snapshot: false
-      - name: Run C undefined-behavior checks
+      - name: Run undefined-behavior checks
         run: >-
           swift test
-          -Xcc -fsanitize=undefined
-          -Xlinker -fsanitize=undefined
+          --sanitize=undefined
+          --disable-xctest
+          --no-parallel
 
   stress:
     name: Stress

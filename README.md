@@ -208,8 +208,7 @@ Scripts/verify-vendored-quickjs.sh
 swift run -c release QuickJSKitBenchmarks --iterations 100
 ```
 
-See [AGENTS.md](AGENTS.md), [Architecture](Documentation/Architecture.md), and
-the [architectural decisions](Documentation/Decisions).
+See [AGENTS.md](AGENTS.md) for contributor and development guidance.
 
 QuickJS is copyright Fabrice Bellard and Charlie Gordon and is distributed
 under the MIT license in `Sources/CQuickJS/LICENSE`.

@@ -22,22 +22,18 @@
   ],
   "patches": [
     {
-      "path": "patches/0001-disable-atomics-on-windows.patch",
-      "description": "Disables the POSIX-thread-based JavaScript Atomics intrinsic on Windows.",
-      "upstreamSHA256": "a00762d2eee42316cecbc9c15efc4549b715ec500461845cd91b2a6c38190d08",
-      "patchedSHA256": "0e6a8be3ccb65f7706752063d85981fb65d037e8969c646c20a4e0d6a8ee2c61"
-    },
-    {
-      "path": "patches/0002-use-native-windows-time.patch",
-      "description": "Uses native Windows UTC time and CRT headers instead of POSIX sys/time.h.",
-      "baseSHA256": "0e6a8be3ccb65f7706752063d85981fb65d037e8969c646c20a4e0d6a8ee2c61",
-      "patchedSHA256": "9f7a27b554fd7526aa62f76afc44c45783cccb9b5a8a6c09f1b09b1ee2423919"
-    },
-    {
-      "path": "patches/0003-use-fixed-width-closure-type-bitfield.patch",
-      "description": "Uses a fixed-width type for QuickJS closure bit-fields on the Microsoft ABI.",
-      "baseSHA256": "9f7a27b554fd7526aa62f76afc44c45783cccb9b5a8a6c09f1b09b1ee2423919",
-      "patchedSHA256": "e50b829b757a64fc1d0a6d3d30adee8dd7cfaa161ddcfba44ae7ade9667e18ea"
+      "path": "patches/windows-compatibility.patch",
+      "description": "Consolidates the Windows compatibility fixes for Atomics, native UTC time, CRT headers, and closure bit-fields.",
+      "files": {
+        "dtoa.c": {
+          "upstreamSHA256": "af5abd68fa9806d1a19bdd5f2daef00d5fd0990ae56311382dfed4700343f074",
+          "patchedSHA256": "be5db87052586d4f97e0589222413fb572b17b3f29261ad58f4a192486a1edca"
+        },
+        "quickjs.c": {
+          "upstreamSHA256": "a00762d2eee42316cecbc9c15efc4549b715ec500461845cd91b2a6c38190d08",
+          "patchedSHA256": "e50b829b757a64fc1d0a6d3d30adee8dd7cfaa161ddcfba44ae7ade9667e18ea"
+        }
+      }
     }
   ]
 }

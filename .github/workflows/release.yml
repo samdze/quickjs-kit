@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   validate-tag:
-    name: Validate release tag
+    name: Tag
     runs-on: ubuntu-24.04
     steps:
       - name: Validate semantic version
@@ -22,15 +22,17 @@ jobs:
           fi
 
   core:
+    name: CI
     needs: validate-tag
     uses: ./.github/workflows/ci.yml
 
   deep-quality:
+    name: Quality
     needs: validate-tag
     uses: ./.github/workflows/quality.yml
 
   artifacts:
-    name: Reproducible release artifacts
+    name: Artifacts
     needs: [core, deep-quality]
     runs-on: macos-26
     env:
@@ -39,9 +41,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9
         with:
           swift-version: "6.3.3"
+          cache-snapshot: false
       - name: Verify locked and vendored inputs
         run: |
           test -f Tests/TypeScriptIntegration/package-lock.json
@@ -103,7 +106,7 @@ jobs:
           retention-days: 30
 
   publish:
-    name: Publish GitHub release
+    name: Publish
     needs: artifacts
     runs-on: ubuntu-24.04
     permissions:

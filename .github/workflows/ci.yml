@@ -11,18 +11,25 @@ permissions:
 
 jobs:
   swift:
-    name: Swift 6.3 (${{ matrix.os }})
+    name: ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15, ubuntu-24.04, windows-2022]
+        include:
+          - platform: macOS
+            os: macos-15
+          - platform: Linux
+            os: ubuntu-24.04
+          - platform: Windows
+            os: windows-2022
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9
         if: runner.os != 'Windows'
         with:
           swift-version: "6.3.3"
+          cache-snapshot: false
       - uses: compnerd/gha-setup-swift@eeda069c5bc95ac8a9ac5cea7d4f588ae5420ca5
         if: runner.os == 'Windows'
         with:
@@ -38,14 +45,17 @@ jobs:
           swift build --package-path Integration/PlatformSmoke
 
   release-quality:
-    name: Release quality gates
+    name: Package quality
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+        with:
+          fetch-depth: 0
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9
         with:
           swift-version: "6.3.3"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+          cache-snapshot: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "24"
           cache: npm
@@ -120,13 +130,14 @@ jobs:
           CODE_SIGNING_ALLOWED=NO
 
   android:
-    name: Android architecture builds
+    name: Android
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: swift-actions/setup-swift@364295d9c23900ce04d4e5cc708387921b4e50f9
+      - uses: SwiftyLab/setup-swift@38f54a76b70d989321de9dc7c840618c08cf56e9
         with:
           swift-version: "6.3.3"
+          cache-snapshot: false
       - name: Select the Swift SDK directory
         shell: bash
         run: printf 'SWIFT_SDKS_PATH=%s\n' "$RUNNER_TEMP/swift-sdks" >> "$GITHUB_ENV"

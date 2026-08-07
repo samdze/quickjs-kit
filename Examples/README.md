@@ -1,6 +1,7 @@
 # QuickJSKit Examples
 
-This standalone Swift package demonstrates complete consumer workflows.
+This standalone Swift package demonstrates the supported consumer workflows
+without importing the repository's test targets.
 
 ```sh
 swift run --package-path Examples QuickJSKitExamples
@@ -18,5 +19,5 @@ swift run --package-path Examples QuickJSKitExamples tooling
 - `tooling` derives schemas with `@JavaScriptExport` and writes a managed editor
   workspace.
 
-The separate `Integration/PlatformSmoke` package combines the portable
-features used by the release-blocking platform matrix.
+The separate `Integration/PlatformSmoke` package is the portable consumer used
+by the platform build matrix.

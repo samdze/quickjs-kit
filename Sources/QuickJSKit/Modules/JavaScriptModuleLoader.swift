@@ -33,7 +33,7 @@ public struct JavaScriptModuleSource: Sendable, Hashable {
     ///   - source: ES module source code.
     ///   - sourceURL: The diagnostic and `import.meta.url` identity.
     ///   - documentation: Structured TSDoc for the loaded module container.
-    ///   - typeScriptDeclarations: Optional declarations included in future
+    ///   - typeScriptDeclarations: Optional declarations included in later
     ///     environment snapshots after this source is loaded.
     public init(
         source: String,

@@ -56,9 +56,9 @@ private extension EnvironmentModuleDescription {
 extension JavaScriptRuntime {
     /// Captures the Swift-provided surface currently visible to JavaScript.
     ///
-    /// JavaScript-created globals and future results from an open-ended module
-    /// loader are intentionally excluded. The returned value is detached from
-    /// this actor and does not change after capture.
+    /// JavaScript-created globals and modules loaded through an open-ended
+    /// module loader are intentionally excluded. The returned value is
+    /// detached from this actor and does not change after capture.
     ///
     /// - Parameter additionalSchemas: Schemas to include even when no current
     ///   binding refers to them.

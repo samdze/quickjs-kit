@@ -15,7 +15,9 @@ import QuickJSKitMacros
 Apply `@JavaScriptExport` to a Codable struct, a raw `String` or `Int` enum, a
 final class, or an actor. Structs and enums become value capabilities. Final
 classes and actors become live host capabilities. Publication remains explicit
-through `JavaScriptType`, so annotation alone never changes a runtime.
+through `JavaScriptType`, so annotation alone never changes a runtime. The
+surrounding `Globals` or `SwiftModule` declaration owns the JavaScript and
+TypeScript location; the exported Swift type does not declare its own scope.
 
 ```swift
 @JavaScriptExport

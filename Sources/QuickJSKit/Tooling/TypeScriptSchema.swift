@@ -1,8 +1,8 @@
 /// Supplies deterministic TypeScript metadata for a Swift model.
 ///
 /// QuickJSKit discovers this conformance when the model appears in a typed
-/// binding or exported value. Future macros can synthesize the same metadata
-/// without creating a separate declaration system.
+/// binding or exported value. Macro-generated conformances use the same
+/// metadata without creating a separate declaration system.
 public protocol TypeScriptSchemaProviding {
     /// The TypeScript schema representing this Swift type.
     static var typeScriptSchema: TypeScriptSchema { get }

@@ -1,10 +1,10 @@
 # QuickJSKit
 
-QuickJSKit is a modern Swift interface to the QuickJS JavaScript engine. It
-provides actor-isolated execution, direct Codable conversion, typed Swift
-bindings, native Promises, ES modules, reusable runtime templates,
-JavaScript-visible Swift types, and deterministic TypeScript tooling without
-exposing C APIs or manual ownership.
+QuickJSKit embeds the QuickJS JavaScript engine behind an actor-isolated Swift
+API. It provides direct Codable conversion, typed Swift bindings, native
+Promises, ES modules, reusable runtime templates, JavaScript-visible Swift
+types, and deterministic TypeScript tooling without exposing C APIs or manual
+ownership.
 
 ```swift
 import QuickJSKit
@@ -150,7 +150,7 @@ let workspace = try environment.typeScriptWorkspace(
 try workspace.write(to: workspaceURL)
 ```
 
-Generated declarations include structured TSDoc, container-owned scopes,
+Generated declarations include structured TSDoc, container-owned locations,
 globals, module exports, grouped type imports, schemas, constructors, and
 source maps. Snapshots contain no runtime, closure, actor, live value, or C
 state.
@@ -209,8 +209,19 @@ runtime isolation are unaffected.
 ```console
 swift test
 swift test -c release -Xswiftc -warnings-as-errors
+swift build --package-path Examples
+swift build --package-path Integration/PlatformSmoke
+Scripts/check-symbol-graphs.sh
 Scripts/verify-vendored-quickjs.sh
 swift run -c release QuickJSKitBenchmarks --iterations 100
+```
+
+The TypeScript integration fixture is validated separately:
+
+```console
+cd Tests/TypeScriptIntegration
+npm ci --ignore-scripts
+npm test
 ```
 
 See [AGENTS.md](AGENTS.md) for contributor and development guidance.

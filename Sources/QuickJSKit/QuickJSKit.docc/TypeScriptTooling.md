@@ -27,6 +27,23 @@ declarations group cross-module references into local `import type` statements;
 global declarations retain inline `import("...").Type` references so the
 generated file remains ambient.
 
+Template publication supplies the location for macro-generated types:
+
+```swift
+let template = try JavaScriptRuntimeTemplate {
+    Globals {
+        JavaScriptType(Configuration.self)
+    }
+    SwiftModule("host:users") {
+        JavaScriptType(User.self)
+    }
+}
+```
+
+The same rule applies to immediate `registerType` and `defineModule` calls.
+Register a referenced type separately when it belongs in another module;
+otherwise its schema follows the container that publishes it.
+
 The managed writer changes only files it owns and whose previous contents match
 its manifest unless overwrite is explicitly requested. It rejects traversal and
 managed-path symlinks.

@@ -25,10 +25,6 @@ extension JavaScriptRuntime {
     public func registerType<Root>(_ type: Root.Type) async throws
     where Root: JavaScriptHostTypeProviding {
         let erased = Root.javaScriptHostTypeDefinition.erase()
-        try JavaScriptTypeLocation.global.validate(
-            scope: erased.scope,
-            typeName: erased.name
-        )
         let identifier = try engine.withEngineEntry(drainJobs: false) {
             try engine.reserveHostType(erased, location: .global)
         }

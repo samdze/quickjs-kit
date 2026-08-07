@@ -67,4 +67,6 @@ jobs:
             swift test --filter RuntimeProvisioner
             swift test --filter RegistryLifetime
             swift test --filter MacroExpansion
+            swift test --filter TypeScriptToolingExamplesTests
+            swift test --filter MacroRuntimeTests
           done

@@ -4,13 +4,13 @@
 ///
 /// Structs and raw enums become Codable value types. Final classes and actors
 /// become live Swift host types. Runtime publication remains explicit through
-/// `JavaScriptType`.
+/// `JavaScriptType`; the containing `Globals` or `SwiftModule` selects the
+/// TypeScript location.
 @attached(
     member,
     names: named(javaScriptExportDocumentation),
     named(javaScriptExportSourceLocation),
     named(javaScriptHostTypeName),
-    named(javaScriptHostTypeScope),
     named(javaScriptExportDefinition),
     named(javaScriptValueTypeDefinition),
     named(javaScriptHostTypeDefinition)
@@ -23,7 +23,7 @@
     JavaScriptHostTypeProviding,
     names: named(typeScriptSchema), named(typeScriptSchemaDependencies)
 )
-public macro JavaScriptExport(scope: TypeScriptDeclarationScope? = nil) =
+public macro JavaScriptExport() =
     #externalMacro(module: "_QuickJSKitMacroPlugin", type: "JavaScriptExportMacro")
 
 /// Excludes one otherwise eligible member from `@JavaScriptExport`.

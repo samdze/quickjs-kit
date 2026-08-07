@@ -301,7 +301,6 @@ extension JavaScriptRuntime {
                 _ = try engine.registerValueType(value, location: location)
             }
         case let .host(host):
-            try location.validate(scope: host.scope, typeName: host.name)
             let identifier = try engine.withEngineEntry(drainJobs: false) {
                 try engine.reserveHostType(host, location: location)
             }
@@ -351,7 +350,6 @@ extension JavaScriptRuntime {
                         )
                     )
                 case let .host(host):
-                    try location.validate(scope: host.scope, typeName: host.name)
                     let identifier = try engine.withEngineEntry(drainJobs: false) {
                         try engine.reserveHostType(host, location: location)
                     }

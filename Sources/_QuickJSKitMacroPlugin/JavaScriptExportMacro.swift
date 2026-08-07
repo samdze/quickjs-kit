@@ -98,7 +98,6 @@ public struct JavaScriptExportMacro: MemberMacro, ExtensionMacro {
             .joined(separator: "\n")
         return [
             DeclSyntax(stringLiteral: "public static let javaScriptHostTypeName = \(swiftLiteral(export.javaScriptName))"),
-            DeclSyntax(stringLiteral: "public static let javaScriptHostTypeScope: TypeScriptDeclarationScope? = \(export.scopeExpression)"),
             DeclSyntax(stringLiteral: "public static let javaScriptExportDocumentation: TypeScriptDocumentation? = \(export.documentationExpression)"),
             DeclSyntax(stringLiteral: "public static let javaScriptExportSourceLocation: TypeScriptSourceLocation? = \(export.sourceLocationExpression)"),
             DeclSyntax(stringLiteral: """
@@ -111,7 +110,6 @@ public struct JavaScriptExportMacro: MemberMacro, ExtensionMacro {
                 name: javaScriptHostTypeName,
                 documentation: javaScriptExportDocumentation,
                 sourceLocation: javaScriptExportSourceLocation,
-                scope: javaScriptHostTypeScope,
                 instanceMembers: javaScriptExportDefinition,
                 constructors: [
                     \(constructors)

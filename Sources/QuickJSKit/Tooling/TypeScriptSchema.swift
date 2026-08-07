@@ -61,9 +61,9 @@ public struct TypeScriptSchema: Sendable, Hashable {
 
     /// The declaration scope inherited by this schema's definitions.
     ///
-    /// A `nil` value uses
-    /// ``TypeScriptDeclarationOptions/defaultTypeScope`` when declarations are
-    /// generated.
+    /// A `nil` value inherits the enclosing ``Globals`` or ``SwiftModule``
+    /// location. For standalone schemas it uses
+    /// ``TypeScriptDeclarationOptions/defaultTypeScope``.
     public let scope: TypeScriptDeclarationScope?
 
     /// The logical Swift declaration location, when known.

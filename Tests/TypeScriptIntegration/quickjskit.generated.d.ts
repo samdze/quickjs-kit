@@ -49,6 +49,8 @@ declare namespace Example.Models {
  */
 declare function loadUser(id: number | bigint): Promise<QuickJSKit.User | null>;
 
+declare function currentUser(): import("host:users").User;
+
 declare module "host:answer" {
     /** Metadata exported by the host module. */
     export interface AnswerMetadata {
@@ -91,4 +93,25 @@ declare module "host:users" {
         /** Saves one user. */
         save(user: User, status: UserStatus): Promise<void>;
     }
+}
+
+declare module "host:billing" {
+    /** A billing user with the same exported name as a users user. */
+    export interface User {
+        id: number | bigint;
+    }
+}
+
+declare module "host:orders" {
+    import type { User as __qjs_User_from_host_billing } from "host:billing";
+    import type { User as __qjs_User_from_host_users } from "host:users";
+
+    /** An order combining users from two host modules. */
+    export interface Order {
+        user: __qjs_User_from_host_users;
+        billingUser?: __qjs_User_from_host_billing;
+        configuration: HostConfiguration;
+    }
+
+    export function loadOrder(): Order;
 }

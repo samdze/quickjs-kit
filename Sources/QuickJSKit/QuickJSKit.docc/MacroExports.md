@@ -18,7 +18,7 @@ classes and actors become live host capabilities. Publication remains explicit
 through `JavaScriptType`, so annotation alone never changes a runtime.
 
 ```swift
-@JavaScriptExport(scope: .module("host:users"))
+@JavaScriptExport
 struct User: Codable, Sendable {
     /// The stable user identifier.
     let id: Int

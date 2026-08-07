@@ -125,17 +125,14 @@ let workspace = try environment.typeScriptWorkspace()
 
 Calling this method does not create QuickJS or invoke a Swift factory.
 
-## Migrating from mutable template builders
+## Publication locations
 
-Template construction now uses nominal declarations rather than an `inout`
-builder. Replace `template.globals` with ``Globals``, `globals.function` with
-``Function``, `globals.value` with ``Value``, and `template.defineModule` with
-``SwiftModule``. Replace `template.registerModule` with ``SourceModule``.
-
-Per-runtime factory groups use ``RuntimeInstance``, ``RuntimeGlobals``,
-``RuntimeObject``, and ``RuntimeModule``. Their members use
-``InstanceFunction`` and ``InstanceValue``. Prepared and startup work uses
-``Prepare`` and ``Startup``. No deprecated mutable-template aliases remain.
+``Globals`` publishes functions, values, and types on `globalThis`.
+``SwiftModule`` publishes the same members in one ES module. A macro-generated
+`@JavaScriptExport` type has no intrinsic TypeScript location, so its schema
+inherits the container that publishes it. References to a separately
+registered type keep that type's own location; generated module declarations
+use one local `import type` block per module and deduplicate its imports.
 
 ## Compilation and ownership
 

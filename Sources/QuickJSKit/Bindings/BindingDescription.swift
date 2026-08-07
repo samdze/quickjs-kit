@@ -17,7 +17,7 @@ internal enum BindingTypeShape: Sendable, Hashable {
     case date
     case url
     case codable(swiftName: String, schema: TypeScriptSchema?)
-    case host(name: String, scope: TypeScriptDeclarationScope?)
+    case host(name: String)
 }
 
 internal struct BindingParameterDescription: Sendable, Hashable {

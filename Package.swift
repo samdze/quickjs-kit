@@ -21,6 +21,10 @@ let package = Package(
             url: "https://github.com/swiftlang/swift-syntax.git",
             from: "603.0.0"
         ),
+        .package(
+            url: "https://github.com/swiftlang/swift-testing.git",
+            from: "6.3.0"
+        ),
     ],
     targets: [
         .target(
@@ -64,7 +68,10 @@ let package = Package(
         ),
         .testTarget(
             name: "QuickJSKitTests",
-            dependencies: ["QuickJSKit"]
+            dependencies: [
+                "QuickJSKit",
+                .product(name: "Testing", package: "swift-testing"),
+            ]
         ),
         .testTarget(
             name: "QuickJSKitMacroTests",
@@ -72,6 +79,7 @@ let package = Package(
                 "QuickJSKit",
                 "QuickJSKitMacros",
                 "_QuickJSKitMacroPlugin",
+                .product(name: "Testing", package: "swift-testing"),
                 // The generic support product works with Swift Testing without
                 // introducing XCTest into package products.
                 .product(

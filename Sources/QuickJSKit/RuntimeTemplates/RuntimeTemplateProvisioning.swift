@@ -221,12 +221,8 @@ internal struct RuntimeTemplateProvisioningPlan: Sendable {
             ) {
                 throw JavaScriptError(kind: .conversion, message: message)
             }
-            let scope: TypeScriptDeclarationScope?
-            switch type {
-            case let .value(definition): scope = definition.schema.scope
-            case let .host(definition): scope = definition.scope
-            }
-            guard let scope else { continue }
+            guard case let .value(definition) = type,
+                  let scope = definition.schema.scope else { continue }
             let matches: Bool
             switch (scope, location) {
             case (.global, .global): matches = true

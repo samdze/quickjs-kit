@@ -114,7 +114,7 @@ Import the optional macro product:
 import QuickJSKit
 import QuickJSKitMacros
 
-@JavaScriptExport(scope: .module("host:users"))
+@JavaScriptExport
 struct User: Codable, Sendable {
     /// The stable user identifier.
     let id: Int
@@ -130,9 +130,10 @@ let template = try JavaScriptRuntimeTemplate {
 }
 ```
 
-Annotation creates a checked capability and metadata; `JavaScriptType` controls
-where it is published. Structs and raw enums are JavaScript value types. Final
-classes and actors are live host types with runtime-local identity.
+Annotation creates a checked capability and metadata; the surrounding
+`Globals` or `SwiftModule` declaration controls where it is published. Structs
+and raw enums are JavaScript value types. Final classes and actors are live host
+types with runtime-local identity.
 
 ## TypeScript tooling
 
@@ -149,9 +150,10 @@ let workspace = try environment.typeScriptWorkspace(
 try workspace.write(to: workspaceURL)
 ```
 
-Generated declarations include structured TSDoc, scopes, globals, module
-exports, schemas, constructors, and source maps. Snapshots contain no runtime,
-closure, actor, live value, or C state.
+Generated declarations include structured TSDoc, container-owned scopes,
+globals, module exports, grouped type imports, schemas, constructors, and
+source maps. Snapshots contain no runtime, closure, actor, live value, or C
+state.
 
 ## Security
 

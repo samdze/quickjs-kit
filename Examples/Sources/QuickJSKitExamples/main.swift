@@ -14,7 +14,7 @@ private actor ExampleUserStore {
 }
 
 /// A user visible to application scripts.
-@JavaScriptExport(scope: .namespace("Example.Models"))
+@JavaScriptExport
 private struct WorkspaceUser: Codable, Sendable {
     /// The stable user identifier.
     let id: Int

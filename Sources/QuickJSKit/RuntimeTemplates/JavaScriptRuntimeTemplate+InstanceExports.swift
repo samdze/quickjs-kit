@@ -123,10 +123,7 @@ extension JavaScriptRuntimeTemplate {
                         sourceLocation: options.parameterSourceLocations[$0]
                     )
                 },
-                result: .host(
-                    name: Result.javaScriptHostTypeName,
-                    scope: Result.javaScriptHostTypeScope
-                ),
+                result: .host(name: Result.javaScriptHostTypeName),
                 effects: .init(isAsync: false, isThrowing: isThrowing),
                 documentation: options.documentation,
                 sourceLocation: options.sourceLocation
@@ -199,10 +196,7 @@ extension JavaScriptRuntimeTemplate {
                 arity: parameterShapes.count
             )
             let resultShape = BindingTypeShape.optional(
-                .host(
-                    name: Result.javaScriptHostTypeName,
-                    scope: Result.javaScriptHostTypeScope
-                )
+                .host(name: Result.javaScriptHostTypeName)
             )
             let draft = BindingDraft(
                 name: name,
@@ -303,10 +297,7 @@ extension JavaScriptRuntimeTemplate {
                 options.parameterNames,
                 arity: parameterShapes.count
             )
-            let hostShape = BindingTypeShape.host(
-                name: Result.javaScriptHostTypeName,
-                scope: Result.javaScriptHostTypeScope
-            )
+            let hostShape = BindingTypeShape.host(name: Result.javaScriptHostTypeName)
             let draft = BindingDraft(
                 name: name,
                 parameters: zip(parameters.names, parameterShapes).map {
@@ -422,10 +413,7 @@ extension JavaScriptRuntimeTemplate {
             _ body: @escaping @Sendable (Root, Argument?) throws -> Result
         ) -> Self {
             let names = BindingValidation.parameterNames(options.parameterNames, arity: 1)
-            let hostShape = BindingTypeShape.host(
-                name: Argument.javaScriptHostTypeName,
-                scope: Argument.javaScriptHostTypeScope
-            )
+            let hostShape = BindingTypeShape.host(name: Argument.javaScriptHostTypeName)
             let draft = BindingDraft(
                 name: name,
                 parameters: [
@@ -502,10 +490,7 @@ extension JavaScriptRuntimeTemplate {
                 options.parameterNames,
                 arity: 1
             )
-            let hostShape = BindingTypeShape.host(
-                name: Argument.javaScriptHostTypeName,
-                scope: Argument.javaScriptHostTypeScope
-            )
+            let hostShape = BindingTypeShape.host(name: Argument.javaScriptHostTypeName)
             let draft = BindingDraft(
                 name: name,
                 parameters: [

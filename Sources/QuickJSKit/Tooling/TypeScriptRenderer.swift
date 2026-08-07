@@ -2,6 +2,42 @@ internal struct TypeScriptRenderer {
     internal let environment: JavaScriptEnvironmentDescription
     internal let options: TypeScriptDeclarationOptions
 
+    private struct ImportPlan {
+        struct Binding: Hashable {
+            let exportedName: String
+            let localName: String
+        }
+
+        let bindings: [String: [Binding]]
+
+        static let empty = Self(bindings: [:])
+
+        func localName(
+            for key: ResolvedTypeScriptDefinitionKey,
+            from scope: ResolvedTypeScriptScope
+        ) -> String? {
+            guard case let .module(specifier) = key.scope,
+                  key.scope != scope else { return nil }
+            return bindings[specifier]?.first(where: {
+                $0.exportedName == key.name
+            })?.localName
+        }
+
+        var source: String {
+            bindings.keys.sorted().map { specifier in
+                let names = bindings[specifier, default: []]
+                    .sorted { $0.exportedName < $1.exportedName }
+                    .map { binding in
+                        binding.exportedName == binding.localName
+                            ? binding.exportedName
+                            : "\(binding.exportedName) as \(binding.localName)"
+                    }
+                    .joined(separator: ", ")
+                return "import type { \(names) } from \(quotedJSONString(specifier));"
+            }.joined(separator: "\n")
+        }
+    }
+
     private var allowsUntyped: Bool { options.completeness == .allowUntyped }
 
     internal func render() throws -> String {
@@ -50,9 +86,10 @@ internal struct TypeScriptRenderer {
         if !environment.modules.isEmpty {
             sections.append(
                 try environment.modules.map {
-                    try renderModule(
+                    let definitions = resolved.definitions(in: .module($0.specifier))
+                    return try renderModule(
                         $0,
-                        definitions: resolved.definitions(in: .module($0.specifier)),
+                        definitions: definitions,
                         resolved: resolved,
                         documentation: documentation
                     )
@@ -64,7 +101,8 @@ internal struct TypeScriptRenderer {
 
     private func renderDefinition(
         _ definition: ResolvedTypeScriptDefinition,
-        documentation: TypeScriptTSDocRenderer
+        documentation: TypeScriptTSDocRenderer,
+        imports: ImportPlan = .empty
     ) throws -> String {
         let prefix: String
         if case .module = definition.key.scope { prefix = "export " } else { prefix = "" }
@@ -79,13 +117,13 @@ internal struct TypeScriptRenderer {
                 let readonly = property.isReadonly ? "readonly " : ""
                 let optional = property.isOptional ? "?" : ""
                 let line = "\(readonly)\(propertyKey(property.name))\(optional): "
-                    + "\(try render(property.type, from: definition.key.scope));"
+                    + "\(try render(property.type, from: definition.key.scope, imports: imports));"
                 return [propertyDocumentation, line].compactMap { $0 }.joined(separator: "\n")
             }.joined(separator: "\n")
             declaration = "\(prefix)interface \(definition.key.name) {\n\(indent(body))\n}"
         case let .alias(type):
             declaration = "\(prefix)type \(definition.key.name) = "
-                + "\(try render(type, from: definition.key.scope));"
+                + "\(try render(type, from: definition.key.scope, imports: imports));"
         case let .enumeration(cases):
             declaration = "\(prefix)type \(definition.key.name) = "
                 + cases.map { renderTypeScriptLiteral($0.value) }.joined(separator: " | ")
@@ -191,9 +229,19 @@ internal struct TypeScriptRenderer {
         documentation: TypeScriptTSDocRenderer
     ) throws -> String {
         let specifier = module.specifier
+        let imports = try importPlan(
+            for: specifier,
+            definitions: definitions,
+            module: module,
+            resolved: resolved
+        )
         let moduleDocumentation: TypeScriptDocumentation?
         var bodySections = try definitions.map {
-            try renderDefinition($0, documentation: documentation)
+            try renderDefinition(
+                $0,
+                documentation: documentation,
+                imports: imports
+            )
         }
 
         switch module {
@@ -227,7 +275,8 @@ internal struct TypeScriptRenderer {
                         $0,
                         specifier: specifier,
                         resolved: resolved,
-                        documentation: documentation
+                        documentation: documentation,
+                        imports: imports
                     )
                 }
             )
@@ -237,7 +286,9 @@ internal struct TypeScriptRenderer {
             moduleDocumentation,
             at: "\(module.isSwift ? "Swift" : "source") module '\(specifier)'"
         )
-        let body = bodySections.joined(separator: "\n\n")
+        let body = ([imports.source] + bodySections)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n\n")
         let declaration = "declare module \(quotedJSONString(specifier)) {\n\(indent(body))\n}"
         return [renderedDocumentation, declaration].compactMap { $0 }.joined(separator: "\n")
     }
@@ -246,7 +297,8 @@ internal struct TypeScriptRenderer {
         _ member: EnvironmentMemberDescription,
         specifier: String,
         resolved: ResolvedTypeScriptEnvironment,
-        documentation: TypeScriptTSDocRenderer
+        documentation: TypeScriptTSDocRenderer,
+        imports: ImportPlan
     ) throws -> String {
         guard member.name == "default" || TypeScriptIdentifier.isValid(member.name) else {
             throw TypeScriptToolingError(
@@ -256,7 +308,12 @@ internal struct TypeScriptRenderer {
         let scope = ResolvedTypeScriptScope.module(specifier)
         switch member {
         case let .function(function) where function.name == "default":
-            let type = try functionType(function, from: scope, resolved: resolved)
+            let type = try functionType(
+                function,
+                from: scope,
+                resolved: resolved,
+                imports: imports
+            )
             let declaration = "const defaultExport: \(type);\nexport default defaultExport;"
             return [
                 try documentation.functionDocumentation(
@@ -273,7 +330,8 @@ internal struct TypeScriptRenderer {
                 from: scope,
                 resolved: resolved,
                 documentation: documentation,
-                documentationLocation: "function export '\(function.name)' of module '\(specifier)'"
+                documentationLocation: "function export '\(function.name)' of module '\(specifier)'",
+                imports: imports
             )
         case let .type(type):
             return try renderRuntimeType(
@@ -281,7 +339,8 @@ internal struct TypeScriptRenderer {
                 prefix: "export const",
                 scope: scope,
                 resolved: resolved,
-                documentation: documentation
+                documentation: documentation,
+                imports: imports
             )
         case let .value(value) where value.name == "default":
             let declarationDocumentation = try documentation.documentation(
@@ -289,7 +348,7 @@ internal struct TypeScriptRenderer {
                 at: "default value export of module '\(specifier)'"
             )
             let declaration = "const defaultExport: "
-                + "\(try render(value.type, from: scope, resolved: resolved));\n"
+                + "\(try render(value.type, from: scope, resolved: resolved, imports: imports));\n"
                 + "export default defaultExport;"
             return [declarationDocumentation, declaration].compactMap { $0 }.joined(separator: "\n")
         case let .value(value):
@@ -298,7 +357,7 @@ internal struct TypeScriptRenderer {
                 at: "value export '\(value.name)' of module '\(specifier)'"
             )
             let declaration = "export const \(value.name): "
-                + "\(try render(value.type, from: scope, resolved: resolved));"
+                + "\(try render(value.type, from: scope, resolved: resolved, imports: imports));"
             return [declarationDocumentation, declaration].compactMap { $0 }.joined(separator: "\n")
         }
     }
@@ -308,7 +367,8 @@ internal struct TypeScriptRenderer {
         prefix: String,
         scope: ResolvedTypeScriptScope,
         resolved: ResolvedTypeScriptEnvironment,
-        documentation: TypeScriptTSDocRenderer
+        documentation: TypeScriptTSDocRenderer,
+        imports: ImportPlan = .empty
     ) throws -> String {
         let renderedDocumentation = try documentation.documentation(
             type.documentation,
@@ -335,7 +395,8 @@ internal struct TypeScriptRenderer {
                 let parameters = try renderParameters(
                     constructor.parameters,
                     from: scope,
-                    resolved: resolved
+                    resolved: resolved,
+                    imports: imports
                 )
                 let docs = try documentation.functionDocumentation(
                     constructor,
@@ -358,7 +419,8 @@ internal struct TypeScriptRenderer {
                         scope: scope,
                         resolved: resolved,
                         documentation: documentation,
-                        owner: type.name
+                        owner: type.name,
+                        imports: imports
                     )
                 )
             }
@@ -370,7 +432,8 @@ internal struct TypeScriptRenderer {
                         scope: scope,
                         resolved: resolved,
                         documentation: documentation,
-                        owner: type.name
+                        owner: type.name,
+                        imports: imports
                     )
                 )
             }
@@ -388,19 +451,22 @@ internal struct TypeScriptRenderer {
         scope: ResolvedTypeScriptScope,
         resolved: ResolvedTypeScriptEnvironment,
         documentation: TypeScriptTSDocRenderer,
-        owner: String
+        owner: String,
+        imports: ImportPlan = .empty
     ) throws -> String {
         switch member {
         case let .function(function):
             let parameters = try renderParameters(
                 function.parameters,
                 from: scope,
-                resolved: resolved
+                resolved: resolved,
+                imports: imports
             )
             let result = try renderFunctionResult(
                 function,
                 from: scope,
-                resolved: resolved
+                resolved: resolved,
+                imports: imports
             )
             let docs = try documentation.functionDocumentation(
                 function,
@@ -416,7 +482,7 @@ internal struct TypeScriptRenderer {
             )
             let readonly = value.isReadOnly ? "readonly " : ""
             let declaration = "\(prefix)\(readonly)\(propertyKey(value.name)): "
-                + "\(try render(value.type, from: scope, resolved: resolved));"
+                + "\(try render(value.type, from: scope, resolved: resolved, imports: imports));"
             return [docs, declaration].compactMap { $0 }.joined(separator: "\n")
         case .type:
             throw TypeScriptToolingError(
@@ -433,10 +499,21 @@ internal struct TypeScriptRenderer {
         from scope: ResolvedTypeScriptScope,
         resolved: ResolvedTypeScriptEnvironment,
         documentation: TypeScriptTSDocRenderer,
-        documentationLocation: String
+        documentationLocation: String,
+        imports: ImportPlan = .empty
     ) throws -> String {
-        let parameters = try renderParameters(function.parameters, from: scope, resolved: resolved)
-        let result = try renderFunctionResult(function, from: scope, resolved: resolved)
+        let parameters = try renderParameters(
+            function.parameters,
+            from: scope,
+            resolved: resolved,
+            imports: imports
+        )
+        let result = try renderFunctionResult(
+            function,
+            from: scope,
+            resolved: resolved,
+            imports: imports
+        )
         let declaration = asProperty
             ? "\(prefix): (\(parameters)) => \(result)\(suffix)"
             : "\(prefix) \(function.name)(\(parameters)): \(result)\(suffix)"
@@ -449,16 +526,18 @@ internal struct TypeScriptRenderer {
     private func functionType(
         _ function: EnvironmentFunctionDescription,
         from scope: ResolvedTypeScriptScope,
-        resolved: ResolvedTypeScriptEnvironment
+        resolved: ResolvedTypeScriptEnvironment,
+        imports: ImportPlan = .empty
     ) throws -> String {
-        "(\(try renderParameters(function.parameters, from: scope, resolved: resolved))) => "
-            + "\(try renderFunctionResult(function, from: scope, resolved: resolved))"
+        "(\(try renderParameters(function.parameters, from: scope, resolved: resolved, imports: imports))) => "
+            + "\(try renderFunctionResult(function, from: scope, resolved: resolved, imports: imports))"
     }
 
     private func renderParameters(
         _ parameters: [BindingParameterDescription],
         from scope: ResolvedTypeScriptScope,
-        resolved: ResolvedTypeScriptEnvironment
+        resolved: ResolvedTypeScriptEnvironment,
+        imports: ImportPlan = .empty
     ) throws -> String {
         var firstTrailingOptional = parameters.count
         for index in parameters.indices.reversed() {
@@ -470,16 +549,22 @@ internal struct TypeScriptRenderer {
             let marker = trailing ? "?" : ""
             let position: TypePosition = trailing ? .optionalParameter : .parameter
             return "\(parameter.name)\(marker): "
-                + "\(try render(parameter.type, position: position, from: scope, resolved: resolved))"
+                + "\(try render(parameter.type, position: position, from: scope, resolved: resolved, imports: imports))"
         }.joined(separator: ", ")
     }
 
     private func renderFunctionResult(
         _ function: EnvironmentFunctionDescription,
         from scope: ResolvedTypeScriptScope,
-        resolved: ResolvedTypeScriptEnvironment
+        resolved: ResolvedTypeScriptEnvironment,
+        imports: ImportPlan = .empty
     ) throws -> String {
-        let result = try render(function.result, from: scope, resolved: resolved)
+        let result = try render(
+            function.result,
+            from: scope,
+            resolved: resolved,
+            imports: imports
+        )
         return function.effects.isAsync ? "Promise<\(result)>" : result
     }
 
@@ -489,7 +574,8 @@ internal struct TypeScriptRenderer {
         _ shape: BindingTypeShape,
         position: TypePosition = .result,
         from scope: ResolvedTypeScriptScope,
-        resolved: ResolvedTypeScriptEnvironment
+        resolved: ResolvedTypeScriptEnvironment,
+        imports: ImportPlan = .empty
     ) throws -> String {
         switch shape {
         case .void: return "void"
@@ -502,23 +588,29 @@ internal struct TypeScriptRenderer {
         case .floatingPoint: return "number"
         case let .integer(_, _, bits): return bits <= 32 ? "number" : "number | bigint"
         case let .array(element):
-            let element = try render(element, from: scope, resolved: resolved)
+            let element = try render(element, from: scope, resolved: resolved, imports: imports)
             return needsArrayParentheses(element) ? "(\(element))[]" : "\(element)[]"
         case let .dictionary(value):
-            return "Record<string, \(try render(value, from: scope, resolved: resolved))>"
+            return "Record<string, \(try render(value, from: scope, resolved: resolved, imports: imports))>"
         case .data: return "Uint8Array"
         case .date: return "Date"
         case let .optional(wrapped):
-            let base = try render(wrapped, position: position, from: scope, resolved: resolved)
+            let base = try render(
+                wrapped,
+                position: position,
+                from: scope,
+                resolved: resolved,
+                imports: imports
+            )
             switch position {
             case .result, .optionalParameter: return "\(base) | null"
             case .parameter: return "\(base) | null | undefined"
             }
         case let .codable(_, schema?):
-            guard let type = resolved.schemaTypes[schema] else {
+            guard let type = resolved.schemaType(schema, from: scope) else {
                 throw TypeScriptToolingError("A collected TypeScript schema could not be resolved.")
             }
-            return try render(type, from: scope)
+            return try render(type, from: scope, imports: imports)
         case let .codable(swiftName, nil):
             guard allowsUntyped else {
                 throw TypeScriptToolingError(
@@ -526,15 +618,15 @@ internal struct TypeScriptRenderer {
                 )
             }
             return "unknown"
-        case let .host(name, declaredScope):
-            let hostScope: TypeScriptDeclarationScope?
-            if let declaredScope {
-                hostScope = declaredScope
-            } else {
-                hostScope = try inferredHostTypeScope(named: name, from: scope)
-            }
+        case let .host(name):
+            let hostScope = try inferredHostTypeScope(named: name, from: scope)
             guard let hostScope else { return name }
-            return renderHostReference(name, scope: hostScope, from: scope)
+            return renderHostReference(
+                name,
+                scope: hostScope,
+                from: scope,
+                imports: imports
+            )
         }
     }
 
@@ -565,7 +657,7 @@ internal struct TypeScriptRenderer {
         let unique = Array(Set(scopes))
         guard unique.count <= 1 else {
             throw TypeScriptToolingError(
-                "JavaScript host type '\(name)' has multiple runtime locations; give its macro an explicit declaration scope."
+                "JavaScript host type '\(name)' has multiple runtime locations and cannot be resolved unambiguously."
             )
         }
         return unique.first
@@ -574,7 +666,8 @@ internal struct TypeScriptRenderer {
     private func renderHostReference(
         _ name: String,
         scope hostScope: TypeScriptDeclarationScope,
-        from currentScope: ResolvedTypeScriptScope
+        from currentScope: ResolvedTypeScriptScope,
+        imports: ImportPlan = .empty
     ) -> String {
         switch hostScope {
         case .global:
@@ -585,13 +678,19 @@ internal struct TypeScriptRenderer {
             if case let .module(current) = currentScope, current == specifier {
                 return name
             }
+            if let alias = imports.bindings[specifier]?.first(where: {
+                $0.exportedName == name
+            })?.localName {
+                return alias
+            }
             return "import(\(quotedJSONString(specifier))).\(name)"
         }
     }
 
     private func render(
         _ type: ResolvedTypeScriptType,
-        from scope: ResolvedTypeScriptScope
+        from scope: ResolvedTypeScriptScope,
+        imports: ImportPlan = .empty
     ) throws -> String {
         switch type {
         case .boolean: return "boolean"
@@ -605,6 +704,9 @@ internal struct TypeScriptRenderer {
         case .uint8Array: return "Uint8Array"
         case let .named(key):
             if key.scope == scope { return key.name }
+            if let alias = imports.localName(for: key, from: scope) {
+                return alias
+            }
             switch key.scope {
             case .global:
                 return key.name
@@ -614,20 +716,268 @@ internal struct TypeScriptRenderer {
                 return "import(\(quotedJSONString(specifier))).\(key.name)"
             }
         case let .array(element):
-            let element = try render(element, from: scope)
+            let element = try render(element, from: scope, imports: imports)
             return needsArrayParentheses(element) ? "(\(element))[]" : "\(element)[]"
         case let .record(value):
-            return "Record<string, \(try render(value, from: scope))>"
+            return "Record<string, \(try render(value, from: scope, imports: imports))>"
         case let .union(types):
             var rendered: [String] = []
             for type in types {
-                let item = try render(type, from: scope)
+                let item = try render(type, from: scope, imports: imports)
                 if !rendered.contains(item) { rendered.append(item) }
             }
             return rendered.joined(separator: " | ")
         case let .literal(literal):
             return renderTypeScriptLiteral(literal)
         }
+    }
+
+    private func importPlan(
+        for specifier: String,
+        definitions: [ResolvedTypeScriptDefinition],
+        module: EnvironmentModuleDescription,
+        resolved: ResolvedTypeScriptEnvironment
+    ) throws -> ImportPlan {
+        let scope = ResolvedTypeScriptScope.module(specifier)
+        var remoteKeys: Set<ResolvedTypeScriptDefinitionKey> = []
+
+        for definition in definitions {
+            collectRemoteKeys(
+                from: definition,
+                scope: scope,
+                into: &remoteKeys
+            )
+        }
+        if case let .swift(_, _, members) = module {
+            for member in members {
+                try collectRemoteKeys(
+                    from: member,
+                    scope: scope,
+                    resolved: resolved,
+                    into: &remoteKeys
+                )
+            }
+        }
+
+        let moduleMemberNames: [String] = switch module {
+        case let .swift(_, _, members): members.map(\.name)
+        case .source: []
+        }
+        let reservedNames = Set(
+            definitions.map(\.key.name)
+                + environment.globals.map(\.name)
+                + moduleMemberNames
+        )
+        var usedNames = reservedNames
+        var bindings: [String: [ImportPlan.Binding]] = [:]
+
+        let sortedKeys = remoteKeys.sorted {
+            switch ($0.scope, $1.scope) {
+            case let (.module(lhs), .module(rhs)):
+                return lhs == rhs ? $0.name < $1.name : lhs < rhs
+            default:
+                return $0.name < $1.name
+            }
+        }
+        var importedNameCounts: [String: Int] = [:]
+        for key in sortedKeys {
+            importedNameCounts[key.name, default: 0] += 1
+        }
+        for key in sortedKeys {
+            guard case let .module(source) = key.scope else { continue }
+            let localName: String
+            if importedNameCounts[key.name] == 1,
+               !usedNames.contains(key.name),
+               TypeScriptIdentifier.isValid(key.name) {
+                localName = key.name
+            } else {
+                localName = uniqueImportAlias(
+                    for: key.name,
+                    from: source,
+                    usedNames: &usedNames
+                )
+            }
+            usedNames.insert(localName)
+            bindings[source, default: []].append(
+                ImportPlan.Binding(
+                    exportedName: key.name,
+                    localName: localName
+                )
+            )
+        }
+        return ImportPlan(bindings: bindings)
+    }
+
+    private func collectRemoteKeys(
+        from definition: ResolvedTypeScriptDefinition,
+        scope: ResolvedTypeScriptScope,
+        into keys: inout Set<ResolvedTypeScriptDefinitionKey>
+    ) {
+        switch definition.kind {
+        case let .interface(properties):
+            for property in properties {
+                collectRemoteKeys(from: property.type, scope: scope, into: &keys)
+            }
+        case let .alias(type):
+            collectRemoteKeys(from: type, scope: scope, into: &keys)
+        case .enumeration:
+            break
+        }
+    }
+
+    private func collectRemoteKeys(
+        from type: ResolvedTypeScriptType,
+        scope: ResolvedTypeScriptScope,
+        into keys: inout Set<ResolvedTypeScriptDefinitionKey>
+    ) {
+        switch type {
+        case let .named(key):
+            if case .module = key.scope, key.scope != scope {
+                keys.insert(key)
+            }
+        case let .array(element), let .record(element):
+            collectRemoteKeys(from: element, scope: scope, into: &keys)
+        case let .union(types):
+            for type in types {
+                collectRemoteKeys(from: type, scope: scope, into: &keys)
+            }
+        default:
+            break
+        }
+    }
+
+    private func collectRemoteKeys(
+        from member: EnvironmentMemberDescription,
+        scope: ResolvedTypeScriptScope,
+        resolved: ResolvedTypeScriptEnvironment,
+        into keys: inout Set<ResolvedTypeScriptDefinitionKey>
+    ) throws {
+        switch member {
+        case let .function(function):
+            for parameter in function.parameters {
+                try collectRemoteKeys(
+                    from: parameter.type,
+                    scope: scope,
+                    resolved: resolved,
+                    into: &keys
+                )
+            }
+            try collectRemoteKeys(
+                from: function.result,
+                scope: scope,
+                resolved: resolved,
+                into: &keys
+            )
+        case let .type(type):
+            if let schema = type.schema,
+               let resolvedType = resolved.schemaType(schema, from: scope) {
+                collectRemoteKeys(from: resolvedType, scope: scope, into: &keys)
+            }
+            if case let .host(constructors, staticMembers, instanceMembers) = type.kind {
+                for constructor in constructors {
+                    try collectRemoteKeys(
+                        from: constructor,
+                        scope: scope,
+                        resolved: resolved,
+                        into: &keys
+                    )
+                }
+                for member in staticMembers + instanceMembers {
+                    try collectRemoteKeys(
+                        from: member,
+                        scope: scope,
+                        resolved: resolved,
+                        into: &keys
+                    )
+                }
+            }
+        case let .value(value):
+            try collectRemoteKeys(
+                from: value.type,
+                scope: scope,
+                resolved: resolved,
+                into: &keys
+            )
+        }
+    }
+
+    private func collectRemoteKeys(
+        from function: EnvironmentFunctionDescription,
+        scope: ResolvedTypeScriptScope,
+        resolved: ResolvedTypeScriptEnvironment,
+        into keys: inout Set<ResolvedTypeScriptDefinitionKey>
+    ) throws {
+        for parameter in function.parameters {
+            try collectRemoteKeys(
+                from: parameter.type,
+                scope: scope,
+                resolved: resolved,
+                into: &keys
+            )
+        }
+        try collectRemoteKeys(
+            from: function.result,
+            scope: scope,
+            resolved: resolved,
+            into: &keys
+        )
+    }
+
+    private func collectRemoteKeys(
+        from shape: BindingTypeShape,
+        scope: ResolvedTypeScriptScope,
+        resolved: ResolvedTypeScriptEnvironment,
+        into keys: inout Set<ResolvedTypeScriptDefinitionKey>
+    ) throws {
+        switch shape {
+        case let .optional(wrapped), let .array(wrapped), let .dictionary(wrapped):
+            try collectRemoteKeys(
+                from: wrapped,
+                scope: scope,
+                resolved: resolved,
+                into: &keys
+            )
+        case let .codable(_, schema?):
+            if let resolvedType = resolved.schemaType(schema, from: scope) {
+                collectRemoteKeys(from: resolvedType, scope: scope, into: &keys)
+            }
+        case let .host(name):
+            let hostScope = try inferredHostTypeScope(named: name, from: scope)
+            if case let .module(source) = hostScope,
+               case let .module(current) = scope,
+               source != current {
+                keys.insert(
+                    ResolvedTypeScriptDefinitionKey(
+                        scope: .module(source),
+                        name: name
+                    )
+                )
+            }
+        default:
+            break
+        }
+    }
+
+    private func uniqueImportAlias(
+        for name: String,
+        from specifier: String,
+        usedNames: inout Set<String>
+    ) -> String {
+        let sanitizedSpecifier = specifier.unicodeScalars.map { scalar in
+            scalar.isASCII && (scalar.value >= 48 && scalar.value <= 57
+                || scalar.value >= 65 && scalar.value <= 90
+                || scalar.value >= 97 && scalar.value <= 122)
+                ? String(scalar)
+                : "_"
+        }.joined()
+        let base = "__qjs_\(name)_from_\(sanitizedSpecifier)"
+        var candidate = base
+        var suffix = 2
+        while usedNames.contains(candidate) || !TypeScriptIdentifier.isValid(candidate) {
+            candidate = "\(base)_\(suffix)"
+            suffix += 1
+        }
+        return candidate
     }
 
     private func propertyKey(_ value: String) -> String {

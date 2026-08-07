@@ -24,9 +24,6 @@ public protocol JavaScriptHostTypeProviding: JavaScriptExportProviding {
     /// The detached JavaScript name, available without initializing bindings.
     static var javaScriptHostTypeName: String { get }
 
-    /// The optional declaration scope required for runtime publication.
-    static var javaScriptHostTypeScope: TypeScriptDeclarationScope? { get }
-
     /// The reusable JavaScript representation of this host type.
     static var javaScriptHostTypeDefinition:
         JavaScriptHostTypeDefinition<Self> { get }
@@ -85,9 +82,6 @@ public struct JavaScriptHostTypeDefinition<Root: AnyObject>: Sendable {
     /// The logical Swift declaration location.
     public let sourceLocation: TypeScriptSourceLocation?
 
-    /// The declaration scope required when this type is published.
-    public let scope: TypeScriptDeclarationScope?
-
     /// The reusable instance-member definition.
     public let instanceMembers: JavaScriptRuntimeTemplate.InstanceExport<Root>
 
@@ -99,14 +93,12 @@ public struct JavaScriptHostTypeDefinition<Root: AnyObject>: Sendable {
         name: String,
         documentation: TypeScriptDocumentation? = nil,
         sourceLocation: TypeScriptSourceLocation? = nil,
-        scope: TypeScriptDeclarationScope? = nil,
         instanceMembers: JavaScriptRuntimeTemplate.InstanceExport<Root>,
         constructors: [JavaScriptHostConstructor<Root>] = []
     ) {
         self.name = name
         self.documentation = documentation
         self.sourceLocation = sourceLocation
-        self.scope = scope
         self.instanceMembers = instanceMembers
         self.constructors = constructors.map(\.definition)
         self.staticMembers = []
@@ -117,7 +109,6 @@ public struct JavaScriptHostTypeDefinition<Root: AnyObject>: Sendable {
         name: String,
         documentation: TypeScriptDocumentation? = nil,
         sourceLocation: TypeScriptSourceLocation? = nil,
-        scope: TypeScriptDeclarationScope? = nil,
         instanceMembers: JavaScriptRuntimeTemplate.InstanceExport<Root>,
         constructors: [JavaScriptHostConstructor<Root>] = [],
         @JavaScriptRuntimeTemplate.ExportBuilder
@@ -126,7 +117,6 @@ public struct JavaScriptHostTypeDefinition<Root: AnyObject>: Sendable {
         self.name = name
         self.documentation = documentation
         self.sourceLocation = sourceLocation
-        self.scope = scope
         self.instanceMembers = instanceMembers
         self.constructors = constructors.map(\.definition)
         self.staticMembers = staticMembers().members
@@ -227,7 +217,6 @@ internal struct AnyJavaScriptHostTypeDefinition: Sendable {
     internal let name: String
     internal let documentation: TypeScriptDocumentation?
     internal let sourceLocation: TypeScriptSourceLocation?
-    internal let scope: TypeScriptDeclarationScope?
     internal let environmentDescription: EnvironmentTypeDescription
     internal let constructors: [AnyJavaScriptHostConstructor]
     internal let staticMembers: [JavaScriptExportMemberDefinition]
@@ -486,7 +475,6 @@ internal extension JavaScriptHostTypeDefinition {
             name: name,
             documentation: documentation,
             sourceLocation: sourceLocation,
-            scope: scope,
             environmentDescription: environment,
             constructors: constructors.map { constructor in
                 let invocation: AnyJavaScriptHostConstructorInvocation

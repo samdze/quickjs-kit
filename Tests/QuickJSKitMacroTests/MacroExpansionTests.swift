@@ -6,7 +6,7 @@ struct MacroExpansionTests {
     func structureExpansion() {
         assertQuickJSKitMacroExpansion(
             """
-            @JavaScriptExport(scope: .namespace("Models"))
+            @JavaScriptExport
             struct User: Codable, Sendable {
                 /// The identifier.
                 let id: Int
@@ -61,7 +61,6 @@ struct MacroExpansionTests {
                 public static var typeScriptSchema: TypeScriptSchema {
                     .interface(
                         "User",
-                        scope: .namespace("Models"),
                         documentation: nil,
                         sourceLocation: .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 1, column: 1),
                         properties: [
@@ -114,7 +113,6 @@ struct MacroExpansionTests {
                 public static var typeScriptSchema: TypeScriptSchema {
                     .enumeration(
                         "State",
-                        scope: nil,
                         documentation: nil,
                         sourceLocation: .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 1, column: 1),
                         cases: [
@@ -158,8 +156,6 @@ struct MacroExpansionTests {
 
                 public static let javaScriptHostTypeName = "Service"
 
-                public static let javaScriptHostTypeScope: TypeScriptDeclarationScope? = nil
-
                 public static let javaScriptExportDocumentation: TypeScriptDocumentation? = nil
 
                 public static let javaScriptExportSourceLocation: TypeScriptSourceLocation? = .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 1, column: 1)
@@ -186,7 +182,6 @@ struct MacroExpansionTests {
                     name: javaScriptHostTypeName,
                     documentation: javaScriptExportDocumentation,
                     sourceLocation: javaScriptExportSourceLocation,
-                    scope: javaScriptHostTypeScope,
                     instanceMembers: javaScriptExportDefinition,
                     constructors: [
                         JavaScriptHostConstructor<Service>(options: .init(parameterNames: ["version"], documentation: nil, sourceLocation: .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 4, column: 5), parameterSourceLocations: ["version": .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 4, column: 10)]), { (version: String) -> Service in
@@ -239,8 +234,6 @@ struct MacroExpansionTests {
 
                 public static let javaScriptHostTypeName = "Counter"
 
-                public static let javaScriptHostTypeScope: TypeScriptDeclarationScope? = nil
-
                 public static let javaScriptExportDocumentation: TypeScriptDocumentation? = nil
 
                 public static let javaScriptExportSourceLocation: TypeScriptSourceLocation? = .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 1, column: 1)
@@ -261,7 +254,6 @@ struct MacroExpansionTests {
                     name: javaScriptHostTypeName,
                     documentation: javaScriptExportDocumentation,
                     sourceLocation: javaScriptExportSourceLocation,
-                    scope: javaScriptHostTypeScope,
                     instanceMembers: javaScriptExportDefinition,
                     constructors: [
                         JavaScriptHostConstructor<Counter>(options: .init(parameterNames: ["identifier", "count"], documentation: nil, sourceLocation: .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 5, column: 5), parameterSourceLocations: ["identifier": .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 5, column: 10), "count": .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 5, column: 27)]), { (identifier: Int, count: Int) -> Counter in
@@ -301,8 +293,6 @@ struct MacroExpansionTests {
 
                 public static let javaScriptHostTypeName = "Settings"
 
-                public static let javaScriptHostTypeScope: TypeScriptDeclarationScope? = nil
-
                 public static let javaScriptExportDocumentation: TypeScriptDocumentation? = nil
 
                 public static let javaScriptExportSourceLocation: TypeScriptSourceLocation? = .init(fileID: "MacroContractTests/MacroContractTests.swift", line: 1, column: 1)
@@ -320,7 +310,6 @@ struct MacroExpansionTests {
                     name: javaScriptHostTypeName,
                     documentation: javaScriptExportDocumentation,
                     sourceLocation: javaScriptExportSourceLocation,
-                    scope: javaScriptHostTypeScope,
                     instanceMembers: javaScriptExportDefinition,
                     constructors: [
 

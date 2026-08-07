@@ -59,7 +59,7 @@ final class MacroMultiplier: Sendable {
 }
 
 /// A user transferred between Swift and JavaScript.
-@JavaScriptExport(scope: .namespace("Example.Models"))
+@JavaScriptExport
 struct MacroUser: Codable, Sendable {
     /// The stable identifier.
     let id: Int
@@ -69,7 +69,7 @@ struct MacroUser: Codable, Sendable {
 }
 
 /// Runtime configuration exposed to scripts.
-@JavaScriptExport(scope: .namespace("Example.Models"))
+@JavaScriptExport
 struct MacroConfiguration: Codable, Sendable {
     /// Whether the feature is enabled.
     let isEnabled: Bool
@@ -79,8 +79,18 @@ struct MacroConfiguration: Codable, Sendable {
     }
 }
 
+@JavaScriptExport
+struct MacroAddress: Codable, Sendable {
+    let city: String
+}
+
+@JavaScriptExport
+struct MacroProfileUser: Codable, Sendable {
+    let address: MacroAddress
+}
+
 /// The lifecycle state of a script job.
-@JavaScriptExport(scope: .namespace("Example.Models"))
+@JavaScriptExport
 enum MacroState: String, Codable, Sendable {
     /// The job has not started.
     case pending
@@ -318,7 +328,12 @@ struct MacroRuntimeTests {
         #expect(declarations.contains("export class RuntimeUserService"))
         #expect(
             declarations.contains(
-                "child?: import(\"host:children\").RuntimeChild | null"
+                "import type { RuntimeChild } from \"host:children\";"
+            )
+        )
+        #expect(
+            declarations.contains(
+                "child?: RuntimeChild | null"
             )
         )
         let runtime = try await template.makeRuntime()
@@ -344,6 +359,74 @@ struct MacroRuntimeTests {
             )
             """)
         #expect(staticResult == 42)
+    }
+
+    @Test("repeated template instances keep declarations and host behavior stable")
+    func repeatedTemplateInstancesRemainStable() async throws {
+        let template = try JavaScriptRuntimeTemplate {
+            Globals {
+                JavaScriptType(RuntimeUser.self)
+            }
+            SwiftModule("host:users") {
+                JavaScriptType(RuntimeUserService.self)
+            }
+        }
+        let expectedDeclarations = try template.environmentDescription()
+            .typeScriptDeclarations()
+
+        for _ in 0..<8 {
+            #expect(
+                try template.environmentDescription().typeScriptDeclarations()
+                    == expectedDeclarations
+            )
+            let runtime = try await template.makeRuntime()
+            let value: Int = try await runtime.evaluate("""
+                import("host:users").then(({ RuntimeUserService }) => {
+                    const user = new RuntimeUser({ id: 40, name: "Ada" });
+                    return new RuntimeUserService(2).adjust(user.id);
+                })
+                """)
+            #expect(value == 42)
+        }
+    }
+
+    @Test("a host type cannot be published in two template locations")
+    func hostTypesHaveOneTemplateLocation() {
+        #expect(throws: JavaScriptError.self) {
+            _ = try JavaScriptRuntimeTemplate {
+                Globals {
+                    JavaScriptType(RuntimeUserService.self)
+                }
+                SwiftModule("host:users") {
+                    JavaScriptType(RuntimeUserService.self)
+                }
+            }
+        }
+    }
+
+    @Test("registered schema dependencies keep their own module location")
+    func registeredSchemaDependenciesKeepTheirLocation() throws {
+        let template = try JavaScriptRuntimeTemplate {
+            SwiftModule("host:models") {
+                JavaScriptType(MacroAddress.self)
+            }
+            SwiftModule("host:users") {
+                JavaScriptType(MacroProfileUser.self)
+            }
+        }
+        let declarations = try template.environmentDescription()
+            .typeScriptDeclarations()
+
+        #expect(
+            declarations.contains(
+                "import type { MacroAddress } from \"host:models\";"
+            )
+        )
+        #expect(
+            declarations.contains(
+                "export interface MacroProfileUser {\n        address: MacroAddress;"
+            )
+        )
     }
 
     @Test("host initializer overloads are selected by strict argument decoding")
@@ -550,18 +633,25 @@ struct MacroRuntimeTests {
             )
             """)
         #expect(moduleResult == "active")
+        let moduleDeclarations = try await moduleRuntime.environmentDescription()
+            .typeScriptDeclarations()
+        #expect(moduleDeclarations.contains("declare module \"host:immediate\""))
+        #expect(moduleDeclarations.contains("export type RuntimeUserState"))
+        #expect(moduleDeclarations.contains("export class RuntimeChild"))
     }
 
-    @Test("type publication is permanent unique and scope checked")
+    @Test("type publication is permanent and unique")
     func typeRegistrationValidation() async throws {
         let runtime = try JavaScriptRuntime()
         try await runtime.registerType(RuntimeUser.self)
         await #expect(throws: JavaScriptError.self) {
             try await runtime.registerType(RuntimeUser.self)
         }
-        await #expect(throws: JavaScriptError.self) {
-            try await runtime.registerType(MacroUser.self)
-        }
+        try await runtime.registerType(MacroUser.self)
+        let declarations = try await runtime.environmentDescription()
+            .typeScriptDeclarations()
+        #expect(declarations.contains("interface RuntimeUser"))
+        #expect(declarations.contains("interface MacroUser"))
     }
 
     @Test("failed type publication rolls back runtime registration")
@@ -597,6 +687,9 @@ struct MacroRuntimeTests {
         }
 
         try await runtime.registerType(RuntimeChild.self)
+        let declarations = try await runtime.environmentDescription()
+            .typeScriptDeclarations()
+        #expect(!declarations.contains("host:invalid-types"))
         let value: Int = try await runtime.evaluate(
             "new RuntimeChild(42).identifier"
         )
@@ -714,7 +807,7 @@ struct MacroRuntimeTests {
     @Test("a value export supplies deterministic TypeScript metadata")
     func valueExportSuppliesSchema() {
         let schema = MacroUser.typeScriptSchema
-        #expect(schema.scope == .namespace("Example.Models"))
+        #expect(schema.scope == nil)
         #expect(schema.definitions.count == 1)
     }
 

@@ -4,7 +4,6 @@ import SwiftSyntaxMacros
 struct ParsedExport {
     let swiftName: String
     let javaScriptName: String
-    let scopeExpression: String
     let documentationExpression: String
     let sourceLocationExpression: String
     let kind: Kind
@@ -41,7 +40,7 @@ struct ParsedExport {
 
 enum ExportSyntaxAnalyzer {
     static func analyze(
-        attribute: AttributeSyntax,
+        attribute _: AttributeSyntax,
         declaration: some DeclGroupSyntax,
         context: some MacroExpansionContext
     ) throws -> ParsedExport {
@@ -52,7 +51,6 @@ enum ExportSyntaxAnalyzer {
         let common = (
             swiftName: swiftName,
             javaScriptName: javaScriptName,
-            scope: scopeExpression(attribute),
             documentation: documentation(of: declaration).declarationExpression,
             location: sourceLocationExpression(of: declaration, in: context)
         )
@@ -64,7 +62,6 @@ enum ExportSyntaxAnalyzer {
             return ParsedExport(
                 swiftName: common.swiftName,
                 javaScriptName: common.javaScriptName,
-                scopeExpression: common.scope,
                 documentationExpression: common.documentation,
                 sourceLocationExpression: common.location,
                 kind: .structure(properties)
@@ -77,7 +74,6 @@ enum ExportSyntaxAnalyzer {
             return ParsedExport(
                 swiftName: common.swiftName,
                 javaScriptName: common.javaScriptName,
-                scopeExpression: common.scope,
                 documentationExpression: common.documentation,
                 sourceLocationExpression: common.location,
                 kind: .enumeration(cases)
@@ -98,7 +94,6 @@ enum ExportSyntaxAnalyzer {
             return ParsedExport(
                 swiftName: common.swiftName,
                 javaScriptName: common.javaScriptName,
-                scopeExpression: common.scope,
                 documentationExpression: common.documentation,
                 sourceLocationExpression: common.location,
                 kind: .host(host)
@@ -114,21 +109,12 @@ enum ExportSyntaxAnalyzer {
             return ParsedExport(
                 swiftName: common.swiftName,
                 javaScriptName: common.javaScriptName,
-                scopeExpression: common.scope,
                 documentationExpression: common.documentation,
                 sourceLocationExpression: common.location,
                 kind: .host(host)
             )
         }
         throw macroFailure(.unsupportedDeclaration, at: declaration)
-    }
-
-    private static func scopeExpression(_ attribute: AttributeSyntax) -> String {
-        guard case let .argumentList(arguments) = attribute.arguments,
-              let argument = arguments.first else {
-            return "nil"
-        }
-        return argument.expression.trimmedDescription
     }
 
     // MARK: Value types

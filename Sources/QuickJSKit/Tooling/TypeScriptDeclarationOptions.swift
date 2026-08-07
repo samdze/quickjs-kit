@@ -8,7 +8,9 @@ public struct TypeScriptDeclarationOptions: Sendable, Hashable {
         case allowUntyped
     }
 
-    /// The declaration scope used by schemas without an explicit scope.
+    /// The declaration scope used by standalone schemas without an explicit
+    /// scope. Schemas exposed through a template container use that
+    /// container's location instead.
     ///
     /// The default preserves QuickJSKit's original namespaced declarations.
     /// Set this to ``TypeScriptDeclarationScope/global`` for ambient top-level

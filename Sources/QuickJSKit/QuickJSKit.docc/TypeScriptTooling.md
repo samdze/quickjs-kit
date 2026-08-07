@@ -22,9 +22,10 @@ TSDoc, and logical source locations. It retains no runtime, closure, actor,
 QuickJS value, or pointer.
 
 Schemas may be ambient globals, members of named namespaces, or exports of an
-ES module. Type-level namespaces do not create JavaScript objects. Module-owned
-types can be imported with `import type`; runtime functions and values still
-require ordinary imports.
+ES module. Type-level namespaces do not create JavaScript objects. Module
+declarations group cross-module references into local `import type` statements;
+global declarations retain inline `import("...").Type` references so the
+generated file remains ambient.
 
 The managed writer changes only files it owns and whose previous contents match
 its manifest unless overwrite is explicitly requested. It rejects traversal and

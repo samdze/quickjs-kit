@@ -41,7 +41,6 @@ enum JavaScriptValueSchemaMacro {
             public static var typeScriptSchema: TypeScriptSchema {
                 .interface(
                     \(literal: export.swiftName),
-                    scope: \(raw: export.scopeExpression),
                     documentation: \(raw: export.documentationExpression),
                     sourceLocation: \(raw: export.sourceLocationExpression),
                     properties: [
@@ -69,7 +68,6 @@ enum JavaScriptValueSchemaMacro {
             public static var typeScriptSchema: TypeScriptSchema {
                 .enumeration(
                     \(literal: export.swiftName),
-                    scope: \(raw: export.scopeExpression),
                     documentation: \(raw: export.documentationExpression),
                     sourceLocation: \(raw: export.sourceLocationExpression),
                     cases: [

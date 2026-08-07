@@ -37,6 +37,11 @@ internal struct ResolvedTypeScriptDefinitionKey: Sendable, Hashable {
     internal let name: String
 }
 
+internal struct ResolvedTypeScriptSchemaKey: Sendable, Hashable {
+    internal let schema: TypeScriptSchema
+    internal let scope: ResolvedTypeScriptScope
+}
+
 internal indirect enum ResolvedTypeScriptType: Sendable, Hashable {
     case boolean
     case string
@@ -77,10 +82,21 @@ internal struct ResolvedTypeScriptDefinition: Sendable, Hashable {
 
 internal struct ResolvedTypeScriptEnvironment {
     internal let definitions: [ResolvedTypeScriptDefinition]
-    internal let schemaTypes: [TypeScriptSchema: ResolvedTypeScriptType]
+    internal let schemaTypes: [ResolvedTypeScriptSchemaKey: ResolvedTypeScriptType]
 
     internal func definitions(in scope: ResolvedTypeScriptScope) -> [ResolvedTypeScriptDefinition] {
         definitions.filter { $0.key.scope == scope }
+    }
+
+    internal func schemaType(
+        _ schema: TypeScriptSchema,
+        from scope: ResolvedTypeScriptScope
+    ) -> ResolvedTypeScriptType? {
+        if let type = schemaTypes[.init(schema: schema, scope: scope)] {
+            return type
+        }
+        let matches = schemaTypes.filter { $0.key.schema == schema }
+        return matches.count == 1 ? matches.first?.value : nil
     }
 }
 
@@ -88,20 +104,68 @@ internal struct TypeScriptSchemaResolver {
     internal let environment: JavaScriptEnvironmentDescription
     internal let options: TypeScriptDeclarationOptions
 
+    private struct CollectedSchema {
+        let schema: TypeScriptSchema
+        let origin: ResolvedTypeScriptScope?
+    }
+
+    private struct SchemaOwnershipKey: Hashable {
+        let schema: TypeScriptSchema
+
+        init(_ schema: TypeScriptSchema) {
+            self.schema = TypeScriptSchema(
+                type: schema.type,
+                definitions: schema.definitions,
+                scope: nil,
+                sourceLocation: schema.sourceLocation
+            )
+        }
+    }
+
+    private struct DefinitionOwnershipKey: Hashable {
+        let definition: TypeScriptDefinition
+
+        init(_ definition: TypeScriptDefinition) {
+            self.definition = TypeScriptDefinition(
+                name: definition.name,
+                scope: nil,
+                documentation: definition.documentation,
+                sourceLocation: definition.sourceLocation,
+                kind: definition.kind
+            )
+        }
+    }
+
     internal func resolve() throws -> ResolvedTypeScriptEnvironment {
         let knownModules = Set(environment.modules.map(\.specifier))
         let defaultScope = try resolve(options.defaultTypeScope, knownModules: knownModules)
         let schemas = collectedSchemas()
 
-        var schemaScopes: [TypeScriptSchema: ResolvedTypeScriptScope] = [:]
+        var schemaOwners: [SchemaOwnershipKey: Set<ResolvedTypeScriptScope>] = [:]
+        var definitionOwners: [DefinitionOwnershipKey: Set<ResolvedTypeScriptScope>] = [:]
+        try collectOwners(
+            into: &schemaOwners,
+            definitions: &definitionOwners,
+            knownModules: knownModules
+        )
+
+        var schemaScopes: [ResolvedTypeScriptSchemaKey: ResolvedTypeScriptScope] = [:]
         var candidates: [(TypeScriptDefinition, ResolvedTypeScriptScope)] = []
         var availableKeys: Set<ResolvedTypeScriptDefinitionKey> = []
 
-        for schema in schemas {
+        for collected in schemas {
+            let schema = collected.schema
             let schemaScope = try schema.scope.map {
                 try resolve($0, knownModules: knownModules)
-            } ?? defaultScope
-            schemaScopes[schema] = schemaScope
+            } ?? uniqueOwner(
+                schemaOwners[SchemaOwnershipKey(schema)],
+                for: "schema '\(schema.primaryName)'"
+            ) ?? collected.origin ?? defaultScope
+            let schemaKey = ResolvedTypeScriptSchemaKey(
+                schema: schema,
+                scope: schemaScope
+            )
+            schemaScopes[schemaKey] = schemaScope
             for definition in schema.definitions {
                 guard TypeScriptIdentifier.isValid(definition.name) else {
                     throw TypeScriptToolingError(
@@ -111,7 +175,10 @@ internal struct TypeScriptSchemaResolver {
                 try validateStructure(definition)
                 let scope = try definition.scope.map {
                     try resolve($0, knownModules: knownModules)
-                } ?? schemaScope
+                } ?? uniqueOwner(
+                    definitionOwners[DefinitionOwnershipKey(definition)],
+                    for: "definition '\(definition.name)'"
+                ) ?? schemaScope
                 candidates.append((definition, scope))
                 availableKeys.insert(.init(scope: scope, name: definition.name))
             }
@@ -133,10 +200,11 @@ internal struct TypeScriptSchemaResolver {
             definitions[resolved.key] = resolved
         }
 
-        var schemaTypes: [TypeScriptSchema: ResolvedTypeScriptType] = [:]
-        for schema in schemas {
-            guard let scope = schemaScopes[schema] else { continue }
-            schemaTypes[schema] = try resolve(
+        var schemaTypes: [ResolvedTypeScriptSchemaKey: ResolvedTypeScriptType] = [:]
+        for schemaKey in schemaScopes.keys {
+            let schema = schemaKey.schema
+            let scope = schemaKey.scope
+            schemaTypes[schemaKey] = try resolve(
                 schema.type,
                 in: scope,
                 availableKeys: availableKeys,
@@ -238,9 +306,35 @@ internal struct TypeScriptSchemaResolver {
             guard TypeScriptIdentifier.isValid(name) else {
                 throw TypeScriptToolingError("The TypeScript reference '\(name)' is not valid.")
             }
-            let targetScope = try declaredScope.map {
-                try resolve($0, knownModules: knownModules)
-            } ?? lexicalScope
+            let targetScope: ResolvedTypeScriptScope
+            if let declaredScope {
+                targetScope = try resolve(declaredScope, knownModules: knownModules)
+            } else {
+                let local = ResolvedTypeScriptDefinitionKey(
+                    scope: lexicalScope,
+                    name: name
+                )
+                if availableKeys.contains(local) {
+                    targetScope = lexicalScope
+                } else {
+                    let matches = availableKeys.filter { $0.name == name }
+                    guard matches.count == 1, let match = matches.first else {
+                        if matches.isEmpty {
+                            throw TypeScriptToolingError(
+                                "TypeScript schema reference '\(lexicalScope.qualifiedName(name))' has no matching definition."
+                            )
+                        }
+                        let destinations = matches
+                            .map { $0.scope.qualifiedName($0.name) }
+                            .sorted()
+                            .joined(separator: ", ")
+                        throw TypeScriptToolingError(
+                            "TypeScript schema reference '\(name)' is ambiguous; matching definitions are \(destinations)."
+                        )
+                    }
+                    targetScope = match.scope
+                }
+            }
             let key = ResolvedTypeScriptDefinitionKey(scope: targetScope, name: name)
             guard availableKeys.contains(key) else {
                 throw TypeScriptToolingError(
@@ -348,68 +442,160 @@ internal struct TypeScriptSchemaResolver {
         }
     }
 
-    private func collectedSchemas() -> [TypeScriptSchema] {
-        var schemas = environment.additionalSchemas
-        for global in environment.globals { collectSchemas(from: global, into: &schemas) }
-        for module in environment.modules { collectSchemas(from: module, into: &schemas) }
+    private func collectedSchemas() -> [CollectedSchema] {
+        var schemas = environment.additionalSchemas.map {
+            CollectedSchema(schema: $0, origin: nil)
+        }
+        for global in environment.globals {
+            collectSchemas(from: global, origin: .global, into: &schemas)
+        }
+        for module in environment.modules {
+            guard case let .swift(specifier, _, _) = module else { continue }
+            collectSchemas(
+                from: module,
+                origin: .module(specifier),
+                into: &schemas
+            )
+        }
         return schemas
     }
 
     private func collectSchemas(
         from global: EnvironmentGlobalDescription,
-        into schemas: inout [TypeScriptSchema]
+        origin: ResolvedTypeScriptScope,
+        into schemas: inout [CollectedSchema]
     ) {
         switch global {
-        case let .function(function): collectSchemas(from: function, into: &schemas)
+        case let .function(function):
+            collectSchemas(from: function, origin: origin, into: &schemas)
         case let .object(_, _, members):
-            for member in members { collectSchemas(from: member, into: &schemas) }
+            for member in members {
+                collectSchemas(from: member, origin: origin, into: &schemas)
+            }
         case let .type(type):
-            if let schema = type.schema { schemas.append(schema) }
-        case let .value(value): collectSchemas(from: value.type, into: &schemas)
+            if let schema = type.schema {
+                schemas.append(CollectedSchema(schema: schema, origin: origin))
+            }
+        case let .value(value):
+            collectSchemas(from: value.type, origin: origin, into: &schemas)
         }
     }
 
     private func collectSchemas(
         from module: EnvironmentModuleDescription,
-        into schemas: inout [TypeScriptSchema]
+        origin: ResolvedTypeScriptScope,
+        into schemas: inout [CollectedSchema]
     ) {
         guard case let .swift(_, _, members) = module else { return }
-        for member in members { collectSchemas(from: member, into: &schemas) }
+        for member in members {
+            collectSchemas(from: member, origin: origin, into: &schemas)
+        }
     }
 
     private func collectSchemas(
         from member: EnvironmentMemberDescription,
-        into schemas: inout [TypeScriptSchema]
+        origin: ResolvedTypeScriptScope,
+        into schemas: inout [CollectedSchema]
     ) {
         switch member {
-        case let .function(function): collectSchemas(from: function, into: &schemas)
+        case let .function(function):
+            collectSchemas(from: function, origin: origin, into: &schemas)
         case let .type(type):
-            if let schema = type.schema { schemas.append(schema) }
-        case let .value(value): collectSchemas(from: value.type, into: &schemas)
+            if let schema = type.schema {
+                schemas.append(CollectedSchema(schema: schema, origin: origin))
+            }
+        case let .value(value):
+            collectSchemas(from: value.type, origin: origin, into: &schemas)
         }
     }
 
     private func collectSchemas(
         from function: EnvironmentFunctionDescription,
-        into schemas: inout [TypeScriptSchema]
+        origin: ResolvedTypeScriptScope,
+        into schemas: inout [CollectedSchema]
     ) {
         for parameter in function.parameters {
-            collectSchemas(from: parameter.type, into: &schemas)
+            collectSchemas(from: parameter.type, origin: origin, into: &schemas)
         }
-        collectSchemas(from: function.result, into: &schemas)
+        collectSchemas(from: function.result, origin: origin, into: &schemas)
     }
 
     private func collectSchemas(
         from shape: BindingTypeShape,
-        into schemas: inout [TypeScriptSchema]
+        origin: ResolvedTypeScriptScope,
+        into schemas: inout [CollectedSchema]
     ) {
         switch shape {
         case let .optional(wrapped), let .array(wrapped), let .dictionary(wrapped):
-            collectSchemas(from: wrapped, into: &schemas)
+            collectSchemas(from: wrapped, origin: origin, into: &schemas)
         case let .codable(_, schema?):
-            schemas.append(schema)
+            schemas.append(CollectedSchema(schema: schema, origin: origin))
         default:
             break
+        }
+    }
+
+    private func collectOwners(
+        into schemaOwners: inout [SchemaOwnershipKey: Set<ResolvedTypeScriptScope>],
+        definitions definitionOwners: inout [DefinitionOwnershipKey: Set<ResolvedTypeScriptScope>],
+        knownModules: Set<String>
+    ) throws {
+        func add(
+            _ schema: TypeScriptSchema,
+            primaryName: String,
+            at scope: ResolvedTypeScriptScope
+        ) {
+            schemaOwners[SchemaOwnershipKey(schema), default: []].insert(scope)
+            for definition in schema.definitions {
+                guard definition.name == primaryName else { continue }
+                definitionOwners[DefinitionOwnershipKey(definition), default: []].insert(scope)
+            }
+        }
+
+        for global in environment.globals {
+            guard case let .type(type) = global, let schema = type.schema else { continue }
+            add(
+                schema,
+                primaryName: type.name,
+                at: try schema.scope.map { try resolve($0, knownModules: knownModules) }
+                    ?? .global
+            )
+        }
+        for module in environment.modules {
+            guard case let .swift(specifier, _, members) = module else { continue }
+            let scope = ResolvedTypeScriptScope.module(specifier)
+            for member in members {
+                guard case let .type(type) = member, let schema = type.schema else { continue }
+                add(
+                    schema,
+                    primaryName: type.name,
+                    at: try schema.scope.map { try resolve($0, knownModules: knownModules) }
+                        ?? scope
+                )
+            }
+        }
+    }
+
+    private func uniqueOwner(
+        _ owners: Set<ResolvedTypeScriptScope>?,
+        for description: String
+    ) throws -> ResolvedTypeScriptScope? {
+        guard let owners, !owners.isEmpty else { return nil }
+        guard owners.count == 1, let owner = owners.first else {
+            let scopes = owners.map(\.displayName).sorted().joined(separator: ", ")
+            throw TypeScriptToolingError(
+                "The \(description) has multiple declaration locations: \(scopes)."
+            )
+        }
+        return owner
+    }
+}
+
+private extension TypeScriptSchema {
+    var primaryName: String {
+        switch type {
+        case let .named(name, _): return name
+        default: return "<anonymous>"
         }
     }
 }

@@ -1,0 +1,27 @@
+@Tutorials(name: "QuickJSKit Tutorials") {
+    @Intro(title: "Learn QuickJSKit") {
+        Choose an essentials-level app integration or an advanced server
+        workflow. Each tutorial introduces its own scenario and API boundary.
+
+        @Image(source: "QuickJSKitTutorial.svg", alt: "A Swift automation host connected to a JavaScript runtime.")
+    }
+
+    @Chapter(name: "Essentials: build a meeting follow-up command") {
+        @Image(source: "QuickJSKitTutorial.svg", alt: "A Swift automation host connected to a JavaScript runtime.")
+
+        Turn a meeting note into a typed plan with `Codable`, one Promise-backed
+        workspace lookup, a file-backed ES-module recipe, and declarations.
+
+        @TutorialReference(tutorial: "doc:BuildAHostForJavaScript")
+    }
+
+    @Chapter(name: "Advanced: run tenant webhook workflows") {
+        @Image(source: "QuickJSKitTutorial.svg", alt: "A Swift automation host connected to a JavaScript runtime.")
+
+        Reuse a webhook environment, automatically publish a runtime-local
+        Swift actor, add allowlisted tenant rules, then control and provision
+        each event.
+
+        @TutorialReference(tutorial: "doc:BuildAProductionPluginRunner")
+    }
+}

@@ -15,6 +15,17 @@ builds generic Apple device consumers, and builds Android AArch64 and x86-64
 consumers. The portable smoke consumer exercises typed
 evaluation, Codable, macros, native Promises, modules, and runtime templates.
 
+## Platform expectations
+
+The core library does not depend on Darwin, Glibc, WinSDK, Android APIs,
+Objective-C, or UI frameworks. The public API does not vary by platform.
+
+Windows runtimes omit JavaScript's POSIX-thread-based `Atomics` intrinsic. This
+does not affect QuickJSKit's actor isolation, Promises, bindings, modules, or
+runtime templates.
+
+## Troubleshooting
+
 When troubleshooting:
 
 - verify the exact Swift 6.3 toolchain;
@@ -22,3 +33,9 @@ When troubleshooting:
 - clean only the affected package build directory;
 - confirm the target has the package's documented minimum platform;
 - reproduce with the standalone `Integration/PlatformSmoke` package.
+
+## Related guides
+
+- <doc:RuntimeModel>
+- <doc:SecurityAndUntrustedCode>
+- <doc:PerformanceAndResourceUsage>

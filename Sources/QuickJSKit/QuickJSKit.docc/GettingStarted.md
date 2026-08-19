@@ -1,41 +1,66 @@
 # Getting Started
 
-Create an isolated runtime and decode JavaScript directly into Swift.
+Use ``JavaScriptRuntime`` when an application needs one isolated JavaScript
+environment.
 
-## Evaluate typed results
+## Add the package
 
-``JavaScriptRuntime`` is an actor. Every operation on its QuickJS heap is
-serialized without requiring locks or a dedicated thread.
+Add the `QuickJSKit` product to your Swift package and import it in the target
+that hosts JavaScript:
 
 ```swift
 import QuickJSKit
+```
 
+QuickJSKit requires Swift 6.3 or later. The public API uses Swift concurrency;
+runtime operations are asynchronous because they cross the runtime actor.
+
+## Create a runtime
+
+```swift
+let runtime = try JavaScriptRuntime()
+```
+
+The default configuration is unrestricted. For externally supplied scripts,
+begin with ``JavaScriptRuntime/Configuration/restricted`` and adjust limits
+after measuring the workload. See <doc:SecurityAndUntrustedCode>.
+
+## Evaluate typed results
+
+The result type controls direct decoding:
+
+```swift
 struct User: Codable, Sendable {
     let id: Int
     let name: String
 }
 
-let runtime = try JavaScriptRuntime()
 let user: User = try await runtime.evaluate("""
     ({ id: 42, name: "Ada" })
     """)
 ```
 
-Use the explicit type argument when contextual inference is unavailable:
+Use an explicit type argument when contextual inference is unavailable:
 
 ```swift
 let user = try await runtime.evaluate(source, as: User.self)
 ```
 
-Raw evaluation returns ``JavaScriptValue`` and preserves live identity for
-objects, arrays, and functions. Typed evaluation decodes directly while the
-temporary result is owned by the runtime.
+Untyped evaluation returns ``JavaScriptValue``. Objects, arrays, and functions
+remain live handles, so use that form when JavaScript identity or mutation is
+important. See <doc:WorkingWithJavaScriptValues>.
 
-## Choose a configuration
+## Choose between typed and live APIs
 
-`JavaScriptRuntime.Configuration()` is unrestricted. Start applications that
-accept externally supplied scripts with
-``JavaScriptRuntime/Configuration/restricted`` and customize its limits for
-their workload. See <doc:RunningUntrustedCode>.
+Prefer typed results for snapshots that can be represented by `Codable`.
+Prefer live values when the JavaScript object must be inspected, mutated, or
+called repeatedly. Both choices preserve runtime isolation; a live handle
+cannot be used with another runtime.
 
-For repeatedly configured runtimes, use <doc:RuntimeTemplates>.
+## Continue learning
+
+- Understand isolation and value lifetime in <doc:RuntimeModel>.
+- Learn conversion rules in <doc:EvaluationAndConversion>.
+- Build an app command with <doc:BuildAHostForJavaScript>.
+- Explore runtime reuse in a server workflow with
+  <doc:BuildAProductionPluginRunner>.

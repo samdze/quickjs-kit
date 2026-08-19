@@ -1,0 +1,156 @@
+@Tutorial(time: 15) {
+    @Intro(title: "Run Tenant Webhook Workflows") {
+        Build a small, reusable JavaScript environment for a webhook service.
+        Swift delivers events and keeps audit records; tenant policy chooses a
+        destination and label for each event.
+    }
+
+    @Section(title: "Define the service boundary") {
+        @ContentAndMedia {
+            The service has one input and one result. Keep the host surface
+            equally small: JavaScript may ask the runtime-local audit object to
+            record a decision, but Swift remains responsible for delivery.
+        }
+
+        @Steps {
+            @Step {
+                In `WebhookModels.swift`, define the event and decision models,
+                then apply `@JavaScriptExport` to `DeliveryDecision` and the
+                `DeliveryAudit` actor. The macro derives their JavaScript API
+                and TypeScript metadata; an actor method appears as a Promise.
+
+                @Code(name: "WebhookModels.swift", file: "TutorialWebhookStep01.swift")
+            }
+
+            @Step {
+                In `WebhookEnvironment.swift`, write the short workflow source
+                beside the service code. It is application-owned and small, so
+                an inline source module is clearer than a separate file.
+
+                @Code(name: "WebhookEnvironment.swift", file: "TutorialWebhookStep02.swift")
+            }
+        }
+    }
+
+    @Section(title: "Create one reusable environment") {
+        @ContentAndMedia {
+            A runtime template describes setup that every webhook runtime needs.
+            It stores definitions, not a JavaScript heap. Each call to
+            `makeRuntime()` creates a fresh heap and a fresh audit actor.
+        }
+
+        @Steps {
+            @Step {
+                In `makeWebhookEnvironment()`, place the actor in a
+                `RuntimeInstance` and publish it as `audit`. `RuntimeObject`
+                uses the macro-generated definition automatically, so there is
+                no handwritten binding list to keep in sync.
+
+                @Code(name: "WebhookEnvironment.swift", file: "TutorialWebhookStep03.swift")
+            }
+
+            @Step {
+                In `WebhookHandler.swift`, make a runtime, import the workflow,
+                and call `decide(event)`. The function receives a detached
+                `WebhookEvent` and returns a detached `DeliveryDecision`.
+
+                @Code(name: "WebhookHandler.swift", file: "TutorialWebhookStep04.swift")
+            }
+        }
+    }
+
+    @Section(title: "Apply tenant policy deliberately") {
+        @ContentAndMedia {
+            Tenant policy is the one part that a tenant team maintains, so it
+            lives in a JavaScript file. The host controls which files are
+            visible through stable `rules:` specifiers.
+        }
+
+        @Steps {
+            @Step {
+                Create `Rules/acme.js`. It has one focused responsibility:
+                choose the destination for an event. It cannot access Swift or
+                load another module by itself.
+
+                @Code(name: "acme.js", file: "TutorialWebhookStep05.js")
+            }
+
+            @Step {
+                In `TenantRuleLoader.swift`, map the one allowed `rules:acme`
+                specifier to that file while preserving the already registered
+                application workflow. A `JavaScriptModuleLoader` resolves and
+                loads rules only after Swift accepts the request.
+
+                @Code(name: "TenantRuleLoader.swift", file: "TutorialWebhookStep06.swift")
+            }
+
+            @Step {
+                Replace `workflowSource` and the initial template factory in
+                `WebhookEnvironment.swift`. The workflow dynamically imports
+                the selected rule and awaits `audit.record`; the revised
+                factory adds the loader without changing the actor or event
+                boundary. Swift preloads the selected rule before it calls the
+                workflow, so rule selection and file access stay in Swift.
+
+                @Code(name: "WebhookEnvironment.swift", file: "TutorialWebhookStep07.swift")
+            }
+        }
+    }
+
+    @Section(title: "Control one request") {
+        @ContentAndMedia {
+            A service creates its restricted template during setup, then gives
+            each request a fresh runtime. A deadline belongs on the one
+            `decide(event)` call, where it limits active JavaScript execution.
+        }
+
+        @Steps {
+            @Step {
+                In `WebhookHandler.swift`, make the restricted environment and
+                add a deadline to `decide(event)`. Swift selects and preloads
+                the rule, then handles the returned decision. A
+                `JavaScriptError` gives the request log a concise diagnostic.
+
+                @Code(name: "WebhookHandler.swift", file: "TutorialWebhookStep08.swift")
+            }
+
+            @Step {
+                Wrap the handler in the server's request task. When the client
+                goes away, cancelling that task also interrupts its active
+                JavaScript call. Swift-owned work still needs its own
+                cancellation policy.
+
+                @Code(name: "WebhookRequest.swift", file: "TutorialWebhookStep09.swift")
+            }
+        }
+    }
+
+    @Section(title: "Prepare service operations") {
+        @ContentAndMedia {
+            The template is also the single description of the JavaScript
+            environment for editor tooling and capacity planning. Neither
+            operation creates shared JavaScript state.
+        }
+
+        @Steps {
+            @Step {
+                In `WebhookTooling.swift`, generate a workspace from the
+                template. The tenant rule stays a checked JavaScript file while
+                the generated declarations describe the Swift capabilities.
+
+                @Code(name: "WebhookTooling.swift", file: "TutorialWebhookStep10.swift")
+            }
+
+            @Step {
+                In `WebhookServer.swift`, prewarm a bounded provisioner when
+                concurrent requests need lower startup latency. Each handed-out
+                runtime owns an independent heap and audit actor. Keep
+                capabilities narrow and rules allowlisted; use process
+                isolation when in-process limits are not a strong enough
+                boundary.
+
+                @Code(name: "WebhookServer.swift", file: "TutorialWebhookStep11.swift")
+            }
+        }
+    }
+}

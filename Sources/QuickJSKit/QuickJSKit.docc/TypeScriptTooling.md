@@ -1,7 +1,7 @@
 # TypeScript Tooling
 
-Generate declarations and an editor workspace for the exact Swift-provided
-JavaScript environment.
+Describe the exact Swift-provided JavaScript environment to TypeScript and
+editor tooling.
 
 ```swift
 let environment = try await runtime.environmentDescription()
@@ -48,5 +48,40 @@ The managed writer changes only files it owns and whose previous contents match
 its manifest unless overwrite is explicitly requested. It rejects traversal and
 managed-path symlinks.
 
-See <doc:MacroExports> for deriving schemas, TSDoc, and source maps from Swift
-declarations.
+## Choose a source of metadata
+
+Call ``JavaScriptRuntime/environmentDescription(including:)`` for the environment already
+installed in a runtime. Call ``JavaScriptRuntimeTemplate/environmentDescription(including:)``
+when declarations are needed without creating a runtime or invoking a per-runtime
+factory.
+
+Both snapshots are detached metadata. They contain globals, exported objects,
+Swift-defined modules, source modules, reachable schemas, structured TSDoc, and
+logical source locations, but no runtime, closure, actor, live value, or C
+state.
+
+## Describe schemas
+
+Use ``TypeScriptSchemaProviding`` for custom Codable shapes, or construct
+``TypeScriptSchema`` directly for interfaces, aliases, and enumerations. A
+schema can be ambient, belong to a named namespace, or be exported from an ES
+module. Type-level namespaces do not create JavaScript objects.
+
+## Document the generated API
+
+Attach ``TypeScriptDocumentation`` to functions, containers, properties, and
+schema definitions. Documentation can include remarks, examples, parameters,
+return values, thrown errors, links, deprecations, and default values.
+
+Use strict documentation completeness when generated declarations are a public
+contract. Use the permissive mode while incrementally documenting an existing
+environment.
+
+See <doc:CompileTimeExports> for deriving schemas, TSDoc, and source maps from
+Swift declarations.
+
+## Related guides
+
+- <doc:CompileTimeExports>
+- <doc:RuntimeTemplates>
+- <doc:ExportingSwiftTypes>

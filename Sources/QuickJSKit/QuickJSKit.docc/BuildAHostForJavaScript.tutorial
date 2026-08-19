@@ -1,0 +1,135 @@
+@Tutorial(time: 15) {
+    @Intro(title: "Build a Meeting Follow-Up Command") {
+        Add a JavaScript command to a Swift notes app. The command turns a
+        structured meeting note into a typed follow-up plan that Swift can
+        preview, confirm, and save.
+    }
+
+    @Section(title: "See a plan make a round trip") {
+        @ContentAndMedia {
+            Start with the smallest useful contract. Swift owns the meeting
+            note, preview, confirmation, and persistence. JavaScript produces
+            only a detached follow-up plan.
+        }
+
+        @Steps {
+            @Step {
+                In `FollowUpCommand.swift`, define the note, task, and plan
+                models. `Codable` makes the boundary explicit: Swift values in
+                and Swift values out.
+
+                @Code(name: "FollowUpCommand.swift", file: "TutorialMeetingStep01.swift")
+            }
+
+            @Step {
+                Create a runtime and decode one tiny JavaScript expression as a
+                `FollowUpPlan`. `evaluate` runs a script and immediately
+                converts its result, which is ideal for a small rule with no
+                inputs or host capabilities yet.
+
+                @Code(name: "FollowUpCommand.swift", file: "TutorialMeetingStep02.swift")
+            }
+        }
+    }
+
+    @Section(title: "Turn the rule into a callable recipe") {
+        @ContentAndMedia {
+            The first rule is short enough to keep beside the Swift command.
+            Make it a source module anyway: an exported function can accept a
+            note, and later the same function can gain host capabilities.
+        }
+
+        @Steps {
+            @Step {
+                In `FollowUpCommand.swift`, declare a short `recipeSource`,
+                register it as `app:follow-up`, import it, and call its
+                exported function with a `MeetingNote`. A source module is a
+                named JavaScript file or string; importing it gives Swift a
+                live function handle.
+
+                @Code(name: "FollowUpCommand.swift", file: "TutorialMeetingStep03.swift")
+            }
+        }
+    }
+
+    @Section(title: "Ask Swift for project context") {
+        @ContentAndMedia {
+            Some teams want a default owner for every task. The project
+            directory remains application data in Swift, while JavaScript gains
+            one narrow asynchronous lookup. A missing lead is a normal,
+            unassigned-plan outcome.
+        }
+
+        @Steps {
+            @Step {
+                Add the actor-backed directory and bind `projectLead(project:)`
+                as a global. This temporary global keeps the next idea focused:
+                an async Swift function appears to JavaScript as a native
+                Promise.
+
+                @Code(name: "FollowUpCommand.swift", file: "TutorialMeetingStep04.swift")
+            }
+
+            @Step {
+                Update the short inline recipe to await the lookup. A project
+                without a lead is not an exceptional condition: the recipe
+                returns an unassigned plan that the notes app can preview.
+
+                @Code(name: "FollowUpCommand.swift", file: "TutorialMeetingStep05.swift")
+            }
+        }
+    }
+
+    @Section(title: "Give recipe authors a stable SDK") {
+        @ContentAndMedia {
+            The inline recipe has served its purpose. A maintained team recipe
+            deserves a file, a documented import, and editor support. Move the
+            one host capability into `host:workspace`.
+        }
+
+        @Steps {
+            @Step {
+                Add `@JavaScriptExport` to `ProjectLead`. The macro derives the
+                JavaScript and TypeScript shape of a Swift type that now belongs
+                to the recipe contract.
+
+                @Code(name: "ProjectLead.swift", file: "TutorialMeetingStep06.swift")
+            }
+
+            @Step {
+                Move the type and lookup into `host:workspace`. A Swift module
+                is an explicit capability list; the directory actor and all UI
+                or persistence code remain private to Swift.
+
+                @Code(name: "FollowUpCommand.swift", file: "TutorialMeetingStep07.swift")
+            }
+
+            @Step {
+                Create `Scripts/follow-up.js` for the version that a team owns.
+                It imports `projectLead` from `host:workspace`, making its
+                dependency visible instead of relying on an ambient global.
+
+                @Code(name: "follow-up.js", file: "TutorialMeetingStep08.js")
+            }
+        }
+    }
+
+    @Section(title: "Make the recipe pleasant to maintain") {
+        @ContentAndMedia {
+            The command now has a stable file-backed recipe and a small host
+            SDK. Generate the editor files from the environment itself, so the
+            declarations cannot drift from the runtime contract.
+        }
+
+        @Steps {
+            @Step {
+                Load the recipe file, register its source URL for diagnostics,
+                run `plan(note)`, then generate declarations and a TypeScript
+                workspace. The authoring loop is simple: edit, type-check, run,
+                and inspect the returned plan.
+
+                @Code(name: "FollowUpCommand.swift", file: "TutorialMeetingStep09.swift")
+            }
+        }
+    }
+}

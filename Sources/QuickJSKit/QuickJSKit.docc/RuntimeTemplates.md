@@ -72,22 +72,9 @@ runtime is returned.
 
 ## Prewarmed runtime supply
 
-``JavaScriptRuntimeProvisioner`` maintains ready runtimes without weakening
-heap isolation:
-
-```swift
-let provisioner = try JavaScriptRuntimeProvisioner(
-    template: template,
-    warmCapacity: 4
-)
-try await provisioner.warmUp()
-
-let runtime = try await provisioner.makeRuntime()
-```
-
-The returned runtime leaves the provisioner permanently. Replenishment creates
-a new independent heap; no runtime is reset, returned, or reused. Shutting down
-the provisioner affects only pending work and runtimes it has not transferred.
+Use ``JavaScriptRuntimeProvisioner`` to move runtime creation ahead of demand
+without weakening heap isolation. See <doc:RuntimeProvisioning> for warm
+capacity, transfer, status, and shutdown behavior.
 
 ## Per-runtime Swift state
 

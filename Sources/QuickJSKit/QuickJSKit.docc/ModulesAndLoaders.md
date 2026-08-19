@@ -1,11 +1,10 @@
-# Modules and Custom Loaders
+# Modules and Loaders
 
-Use standard ES modules and explicit Swift-defined modules.
+Use standard ES modules, Swift-defined modules, and explicit loader policy.
 
-## Register and import source
+## Register source modules
 
 ```swift
-let runtime = try JavaScriptRuntime()
 try await runtime.registerModule(
     "export const answer = 42;",
     as: "app:answer",
@@ -16,11 +15,12 @@ let module = try await runtime.importModule("app:answer")
 let answer: Int = try await module.value(forExport: "answer")
 ```
 
-Registered modules support static imports, cycles, re-exports, dynamic imports
-of available sources, and top-level `await`. A module evaluates at most once in
-one runtime.
+Registered modules support static imports, relative imports, cycles,
+re-exports, available dynamic imports, and top-level `await`. A module
+evaluates at most once in one runtime, and repeated imports preserve module and
+namespace identity.
 
-## Define a Swift module
+## Define Swift modules
 
 ```swift
 try await runtime.defineModule("host:math") { module in
@@ -28,12 +28,50 @@ try await runtime.defineModule("host:math") { module in
         left + right
     }
 }
+
+let module = try await runtime.evaluateModule("""
+    import { sum } from "host:math";
+    export const answer = sum(20, 22);
+    """, sourceURL: "memory:///main.js")
+let answer: Int = try await module.value(forExport: "answer")
 ```
 
-Custom ``JavaScriptModuleLoader`` resolution and loading closures are
-`Sendable`. Loaded source crosses suspension only as Swift data; no C value or
-borrowed string leaves the runtime entry. Resolve only allowlisted specifiers
-when scripts are not trusted.
+Swift modules use the same typed binding and Promise behavior as global
+bindings, but publish members in an ES module namespace.
 
-Templates can preload module graphs without evaluating them or import selected
-modules during startup. See <doc:RuntimeTemplates>.
+## Add an asynchronous loader
+
+```swift
+try await runtime.setModuleLoader(
+    JavaScriptModuleLoader { request in
+        JavaScriptModuleSource(
+            source: loadSource(for: request.specifier),
+            sourceURL: request.specifier
+        )
+    }
+)
+```
+
+The resolver and loader are `Sendable`. Loading happens as Swift data outside a
+suspending QuickJS callback. Concurrent requests for one canonical specifier
+share the same load work; cancelling one consumer does not cancel work needed
+by another.
+
+## Define module policy
+
+QuickJSKit does not include an implicit filesystem, network, package-manager,
+or npm loader. Applications decide which specifiers are resolvable and which
+source may be loaded. For untrusted scripts, allowlist specifiers and validate
+loader results. Loader configuration becomes fixed once compilation begins.
+
+## Prepare module graphs
+
+Use ``JavaScriptRuntimeTemplate`` to register source modules and loaders before
+creating a runtime. Use `PreloadModule` when a graph should be compiled without
+evaluating it, or `ImportModule` when startup should evaluate selected modules.
+
+## Related guides
+
+- <doc:BindingsAndPromises>
+- <doc:RuntimeTemplates>
+- <doc:SecurityAndUntrustedCode>

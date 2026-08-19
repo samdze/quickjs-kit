@@ -74,6 +74,9 @@ jobs:
       - name: Validate public symbol graphs
         run: Scripts/check-symbol-graphs.sh
       - name: Check API compatibility
+        # Beta tags may intentionally contain breaking API changes. Main and
+        # stable release tags remain protected by the accepted API baseline.
+        if: ${{ github.ref_type != 'tag' || !contains(github.ref_name, '-') }}
         shell: bash
         run: |
           baseline=$(tr -d '[:space:]' < .github/api-baseline)

@@ -7,58 +7,68 @@ struct TypeScriptToolingExamplesTests {
     private struct UsersUser: Codable, Sendable, TypeScriptSchemaProviding {
         let id: Int
 
-        static let typeScriptSchema = TypeScriptSchema.interface(
-            "User",
-            scope: .module("host:users"),
-            properties: [.init("id", type: .number)]
-        )
+        static var typeScriptSchema: TypeScriptSchema {
+            TypeScriptSchema.interface(
+                "User",
+                scope: .module("host:users"),
+                properties: [.init("id", type: .number)]
+            )
+        }
     }
 
     private struct BillingUser: Codable, Sendable, TypeScriptSchemaProviding {
         let id: Int
 
-        static let typeScriptSchema = TypeScriptSchema.interface(
-            "User",
-            scope: .module("host:billing"),
-            properties: [.init("id", type: .number)]
-        )
+        static var typeScriptSchema: TypeScriptSchema {
+            TypeScriptSchema.interface(
+                "User",
+                scope: .module("host:billing"),
+                properties: [.init("id", type: .number)]
+            )
+        }
     }
 
     struct User: Codable, Sendable, Equatable, TypeScriptSchemaProviding {
         let id: Int
         let name: String
 
-        static let typeScriptSchema = TypeScriptSchema.interface(
-            "User",
-            documentation: "A user visible to embedded scripts.",
-            properties: [
-                .init("id", type: .number, isReadonly: true),
-                .init("name", type: .string, isReadonly: true),
-            ]
-        )
+        static var typeScriptSchema: TypeScriptSchema {
+            TypeScriptSchema.interface(
+                "User",
+                documentation: "A user visible to embedded scripts.",
+                properties: [
+                    .init("id", type: .number, isReadonly: true),
+                    .init("name", type: .string, isReadonly: true),
+                ]
+            )
+        }
     }
 
     struct ModuleUser: Codable, Sendable, TypeScriptSchemaProviding {
         let id: Int
 
-        static let typeScriptSchema = TypeScriptSchema.interface(
-            "User",
-            scope: .module("host:users"),
-            documentation: "A user exported by the host users module.",
-            properties: [
-                .init("id", type: .number, isReadonly: true),
-            ]
-        )
+        static var typeScriptSchema: TypeScriptSchema {
+            TypeScriptSchema.interface(
+                "User",
+                scope: .module("host:users"),
+                documentation: "A user exported by the host users module.",
+                properties: [
+                    .init("id", type: .number, isReadonly: true),
+                ]
+            )
+        }
     }
 
     private struct GlobalConfiguration: Codable, Sendable, TypeScriptSchemaProviding {
         let environment: String
 
-        static let typeScriptSchema = TypeScriptSchema.interface(
-            "GlobalConfiguration",
-            scope: .global,
-            properties: [.init("environment", type: .string)]
-        )
+        static var typeScriptSchema: TypeScriptSchema {
+            TypeScriptSchema.interface(
+                "GlobalConfiguration",
+                scope: .global,
+                properties: [.init("environment", type: .string)]
+            )
+        }
     }
 
     private struct Order: Codable, Sendable, TypeScriptSchemaProviding {
@@ -66,37 +76,39 @@ struct TypeScriptToolingExamplesTests {
         let billingUser: BillingUser?
         let configuration: GlobalConfiguration
 
-        static let typeScriptSchema = TypeScriptSchema.interface(
-            "Order",
-            scope: .module("host:orders"),
-            properties: [
-                .init(
-                    "user",
-                    type: .named("User", scope: .module("host:users"))
-                ),
-                .init(
-                    "billingUser",
-                    type: .named("User", scope: .module("host:billing")),
-                    isOptional: true
-                ),
-                .init(
-                    "configuration",
-                    type: .named("GlobalConfiguration", scope: .global)
-                ),
-                .init(
-                    "users",
-                    type: .array(.named("User", scope: .module("host:users")))
-                ),
-                .init(
-                    "byID",
-                    type: .record(.named("User", scope: .module("host:users")))
-                ),
-                .init(
-                    "state",
-                    type: .union([.string, .null])
-                ),
-            ]
-        )
+        static var typeScriptSchema: TypeScriptSchema {
+            TypeScriptSchema.interface(
+                "Order",
+                scope: .module("host:orders"),
+                properties: [
+                    .init(
+                        "user",
+                        type: .named("User", scope: .module("host:users"))
+                    ),
+                    .init(
+                        "billingUser",
+                        type: .named("User", scope: .module("host:billing")),
+                        isOptional: true
+                    ),
+                    .init(
+                        "configuration",
+                        type: .named("GlobalConfiguration", scope: .global)
+                    ),
+                    .init(
+                        "users",
+                        type: .array(.named("User", scope: .module("host:users")))
+                    ),
+                    .init(
+                        "byID",
+                        type: .record(.named("User", scope: .module("host:users")))
+                    ),
+                    .init(
+                        "state",
+                        type: .union([.string, .null])
+                    ),
+                ]
+            )
+        }
     }
 
     @Test("cross-scope declarations render as one stable complete file")

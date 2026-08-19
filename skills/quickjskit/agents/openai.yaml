@@ -1,0 +1,7 @@
+interface:
+  display_name: "QuickJSKit"
+  short_description: "Build safe Swift JavaScript integrations"
+  default_prompt: "Use $quickjskit to implement or review a safe QuickJSKit integration."
+
+policy:
+  allow_implicit_invocation: false

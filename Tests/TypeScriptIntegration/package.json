@@ -6,7 +6,7 @@
     "test:tsdoc": "node validate-tsdoc.mjs"
   },
   "devDependencies": {
-    "@microsoft/tsdoc": "0.16.0",
+    "@microsoft/tsdoc": "0.17.0",
     "typescript": "7.0.2"
   }
 }
